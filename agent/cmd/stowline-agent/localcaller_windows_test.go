@@ -8,8 +8,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
@@ -52,6 +52,39 @@ func TestTheCallerIsTheAccountThatOpenedTheConnection(t *testing.T) {
 	}
 }
 
+// daclAllows compares SIDs, not SDDL text: SDDL writes some accounts as
+// aliases (the built-in Administrator is "LA"), not as S-1-5-... With
+// explicit, only an ACE set on path itself counts, not an inherited one.
+func daclAllows(t *testing.T, path, sid string, explicit bool) bool {
+	t.Helper()
+	want, err := windows.StringToSid(sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dacl, _, err := sd.DACL()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := uint32(0); i < uint32(dacl.AceCount); i++ {
+		var ace *windows.ACCESS_ALLOWED_ACE
+		if windows.GetAce(dacl, i, &ace) != nil {
+			continue
+		}
+		if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE || !(*windows.SID)(unsafe.Pointer(&ace.SidStart)).Equals(want) {
+			continue
+		}
+		if explicit && ace.Header.AceFlags&windows.INHERITED_ACE != 0 {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
 func TestRestoredFilesAreReadableByTheRequesterNotEveryUser(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "C", "Belgeler", "rapor.docx")
@@ -65,12 +98,11 @@ func TestRestoredFilesAreReadableByTheRequesterNotEveryUser(t *testing.T) {
 	if err := grantReadTo(dir, sid); err != nil {
 		t.Fatal(err)
 	}
-	sd, err := windows.GetNamedSecurityInfo(file, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
-	if err != nil {
-		t.Fatal(err)
+	if !daclAllows(t, dir, sid, true) {
+		t.Fatalf("the restore folder has no ACE of its own for the requester %s", sid)
 	}
-	if !strings.Contains(sd.String(), ";;;"+sid+")") {
-		t.Fatalf("file DACL lacks the requester: %s", sd.String())
+	if !daclAllows(t, file, sid, false) {
+		t.Fatalf("files already inside do not get the requester's access %s", sid)
 	}
 	if grantReadTo(dir, "") == nil {
 		t.Fatal("a grant without an account must fail, not fall back to everyone")
