@@ -33,7 +33,7 @@ projects' repositories.
 **Server dependencies** (installed by pip): FastAPI (MIT), Uvicorn
 (BSD-3-Clause), SQLAlchemy (MIT), Pydantic and pydantic-settings (MIT),
 httpx (BSD-3-Clause), python-multipart (Apache-2.0), cryptography
-(Apache-2.0 or BSD-3-Clause), psycopg (LGPL-3.0, optional, for PostgreSQL).
+(Apache-2.0 or BSD-3-Clause), tzdata (Apache-2.0), psycopg (LGPL-3.0, optional, for PostgreSQL).
 
 **Fonts bundled with the admin panel**: Inter and JetBrains Mono (SIL Open
 Font License 1.1), Material Symbols (Apache-2.0).
