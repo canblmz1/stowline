@@ -107,6 +107,10 @@ Tests: `go test ./...`, `pytest server/tests gateway/tests tools/stowline-setup/
 | `deployments/` | Docker Compose (production and lab), systemd + Caddy |
 | `i18n/` | Turkish → English interface text |
 
+## Author
+
+Stowline was designed and built by **[@canblmz1](https://github.com/canblmz1)** — originally for the computers of a small multi-site office, then released for everyone.
+
 ## Status and support
 
 Stowline is maintained in spare time. Bug reports and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Security issues: [SECURITY.md](SECURITY.md).
@@ -145,5 +149,7 @@ Sıradan ofis bilgisayarları ve kısıtlı internet hatları olan, birden çok 
 1. **Sunucu:** Docker kurulu bir Linux sunucuda `deployments/compose` klasöründe `.env` dosyasını doldurup `docker compose -f docker-compose.prod.yml up -d` (ayrıntılar: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)).
 2. **İndir:** [Son sürümden](../../releases/latest) `Stowline-Setup-<sürüm>.exe`.
 3. **Her bilgisayarda çalıştır:** sunucu adresini, şubeyi, departmanı ve klasörleri sorar; sondaki tek tıkla ilk yedek başlar.
+
+**Geliştiren:** [@canblmz1](https://github.com/canblmz1) — fikir ve tasarım.
 
 **Lisans:** Apache 2.0 + Commons Clause. Ücretsiz kullanabilirsiniz — evde, okulda, dernekte **ya da şirketinizin kendi bilgisayarlarını yedeklemek için**. Değiştirip paylaşabilirsiniz. **Satmak yasaktır:** Stowline'ı ya da değeri esas olarak ondan gelen bir ürün/hizmeti (başkalarına barındırma, ücretli kurulum/destek dahil) satamazsınız.

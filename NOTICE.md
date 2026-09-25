@@ -3,7 +3,7 @@
 Stowline is licensed under the Apache License 2.0 with the Commons Clause
 License Condition v1.0 (see [LICENSE](LICENSE)).
 
-Copyright 2026 The Stowline authors
+Copyright 2026 canblmz1 (https://github.com/canblmz1) and the Stowline authors
 
 ## Third-party software
 
