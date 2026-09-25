@@ -98,7 +98,14 @@ for u in stowline-control.service stowline-worker.service stowline-gateway.servi
 done
 systemctl daemon-reload
 systemctl enable stowline-gateway stowline-control stowline-worker stowline-dbdump.timer >/dev/null
-systemctl restart stowline-gateway
+# A gateway restart drops uploads in flight (and a setup wizard creating its
+# repository at that moment fails). STOWLINE_RESTART_GATEWAY=0 keeps it
+# running when only the control plane changed.
+if [ "${STOWLINE_RESTART_GATEWAY:-1}" = "1" ]; then
+  systemctl restart stowline-gateway
+else
+  echo "[stowline] gateway left running (STOWLINE_RESTART_GATEWAY=0)"
+fi
 systemctl restart stowline-control
 systemctl restart stowline-worker
 systemctl start stowline-dbdump.timer

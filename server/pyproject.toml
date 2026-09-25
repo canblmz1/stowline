@@ -1,6 +1,6 @@
 [project]
 name = "stowline-control"
-version = "0.1.0"
+version = "0.1.1"
 description = "Stowline control plane (full pilot, not production 1.0)"
 requires-python = ">=3.12"
 dependencies = [

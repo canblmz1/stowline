@@ -12,7 +12,7 @@ import json
 import os
 from pathlib import Path
 
-_FALLBACK_VERSION = "0.1.0"
+_FALLBACK_VERSION = "0.1.1"
 
 
 def _release_dirs() -> list[Path]:
@@ -66,3 +66,20 @@ def agent_pin() -> tuple[str, bool]:
     sha = str(data.get("agent_sha256") or "")
     qualified = bool(data.get("agent_qualified"))
     return sha, qualified
+
+
+def canary_pin(device_id: str) -> tuple[str, Path] | None:
+    """A new agent build tried on a few named computers before everyone gets
+    it. manifest.json "canary": {"agent_sha256": ..., "device_ids": [...]},
+    binary at release/bin/stowline-agent-canary.exe. Read fresh every call, so
+    adding or removing a computer needs no redeploy. None = not a canary."""
+    c = _manifest().get("canary") or {}
+    sha = str(c.get("agent_sha256") or "").lower()
+    ids = [str(x) for x in (c.get("device_ids") or [])]
+    if len(sha) != 64 or not device_id or device_id not in ids:
+        return None
+    for d in _release_dirs():
+        path = d / "bin" / "stowline-agent-canary.exe"
+        if path.exists():
+            return sha, path
+    return None

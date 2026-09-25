@@ -20,7 +20,7 @@ def test_agent_pin_matches_the_committed_manifest():
     sha, qualified = agent_pin()
     assert sha == "" or len(sha) == 64  # empty until scripts/pin-release.py publishes an agent
     assert isinstance(qualified, bool)
-    assert RELEASE_VERSION == "0.1.0"
+    assert RELEASE_VERSION == "0.1.1"
 
 
 def test_heartbeat_exposes_the_current_agent_pin(client):
@@ -166,3 +166,50 @@ def test_worker_resends_every_measured_site_limit_to_the_gateway(monkeypatch):
         assert worker.push_site_limits(db) >= 2
     assert {"hq", "branch"} <= {s for s, _ in sent}
     assert all(bps > 0 for _, bps in sent)
+
+
+def test_a_canary_computer_gets_the_canary_build_and_others_keep_the_pin(client, monkeypatch, tmp_path):
+    import app.services as services
+
+    login(client)
+    canary = _enroll(client, "upgrade-canary-01", "branch")
+    other = _enroll(client, "upgrade-canary-02", "branch")
+    exe = tmp_path / "stowline-agent-canary.exe"
+    exe.write_bytes(b"canary build")
+    sha = hashlib.sha256(exe.read_bytes()).hexdigest()
+    monkeypatch.setattr(services, "agent_pin", lambda: ("b" * 64, True))
+    monkeypatch.setattr(services, "canary_pin", lambda device_id: (sha, exe) if device_id == canary["device_id"] else None)
+
+    def hb(d):
+        return client.post("/api/v1/agent/heartbeat", json={"sequence": 1}, headers={"Authorization": f"Bearer {d['control_credential']}"}).json()
+
+    assert (hb(canary)["agent_sha256"], hb(canary)["agent_qualified"]) == (sha, True)
+    assert hb(other)["agent_sha256"] == "b" * 64
+    got = client.get("/api/v1/agent/binary", headers={"Authorization": f"Bearer {canary['control_credential']}"})
+    assert got.status_code == 200 and got.content == b"canary build"
+
+
+def test_a_canary_binary_that_does_not_match_its_pin_is_refused(client, monkeypatch, tmp_path):
+    import app.services as services
+
+    login(client)
+    canary = _enroll(client, "upgrade-canary-03", "branch")
+    exe = tmp_path / "stowline-agent-canary.exe"
+    exe.write_bytes(b"tampered")
+    monkeypatch.setattr(services, "canary_pin", lambda device_id: ("c" * 64, exe))
+    got = client.get("/api/v1/agent/binary", headers={"Authorization": f"Bearer {canary['control_credential']}"})
+    assert got.status_code == 503
+
+
+def test_canary_pin_reads_the_manifest(monkeypatch, tmp_path):
+    import json
+
+    import app.version as v
+
+    (tmp_path / "bin").mkdir()
+    (tmp_path / "bin" / "stowline-agent-canary.exe").write_bytes(b"x")
+    (tmp_path / "manifest.json").write_text(json.dumps({"canary": {"agent_sha256": "D" * 64, "device_ids": ["dev-1"]}}), encoding="utf-8")
+    monkeypatch.setenv("STOWLINE_RELEASE_DIR", str(tmp_path))
+    assert v.canary_pin("dev-1") == ("d" * 64, tmp_path / "bin" / "stowline-agent-canary.exe")
+    assert v.canary_pin("dev-2") is None
+    assert v.canary_pin("") is None

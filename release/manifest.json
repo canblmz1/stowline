@@ -1,5 +1,5 @@
 {
-  "version": "0.1.0",
+  "version": "0.1.1",
   "agent_sha256": "",
   "agent_qualified": false,
   "restic_version": "0.19.1",

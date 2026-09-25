@@ -2,7 +2,7 @@
 # Two consecutive runs of this script on the same commit and Go version must match.
 param(
     [Parameter(Mandatory = $true)][string]$OutDir,
-    [string]$Version = "0.1.0"
+    [string]$Version = "0.1.1"
 )
 
 $ErrorActionPreference = "Stop"

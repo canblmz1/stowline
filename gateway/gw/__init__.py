@@ -149,7 +149,7 @@ def create_app_with_store(store, registry: Registry, site_limits: dict | None = 
     from gw.limiter import SiteLimiter
     from gw.usage import UsageMeter
 
-    app = FastAPI(title="Stowline backup gateway", version="0.1.0")
+    app = FastAPI(title="Stowline backup gateway", version="0.1.1")
     app.state.store = store
     app.state.registry = registry
     app.state.limiter = SiteLimiter(site_limits or {})

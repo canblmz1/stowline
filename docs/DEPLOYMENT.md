@@ -165,7 +165,18 @@ python scripts\pin-release.py --agent releases\build\stowline-agent.exe --qualif
 ```
 
 then redeploy the server (`install.sh` again, or rebuild the compose
-images). Every enrolled computer picks the new build up on its next
+images; `STOWLINE_RESTART_GATEWAY=0 install.sh` leaves the gateway, and the
+uploads going through it, alone when only the control plane changed).
+
+To try a new build on a few computers first, put it at
+`release/bin/stowline-agent-canary.exe` and add to `release/manifest.json`
+
+```json
+"canary": {"agent_sha256": "<its SHA-256>", "device_ids": ["<device id>", "..."]}
+```
+
+Only those computers upgrade (the file is re-read on every heartbeat, no
+restart needed); the rest keep the qualified pin. Remove the entry to stop. Every enrolled computer picks the new build up on its next
 heartbeat, verifies the SHA-256, restarts into it once no backup or restore
 is running, and rolls back if it does not come up healthy.
 

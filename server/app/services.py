@@ -56,7 +56,7 @@ from app.security import (
     as_utc,
     verify_secret,
 )
-from app.version import agent_binary_path, agent_pin
+from app.version import agent_binary_path, agent_pin, canary_pin
 
 _gateway_admin_ok: bool | None = None
 _gateway_admin_reason = ""
@@ -733,13 +733,20 @@ def device_from_control_secret(db: Session, secret: str) -> tuple[Device, Instal
     return dev, inst
 
 
-def agent_binary_for_download() -> Path:
+def agent_binary_for_download(device_id: str = "") -> Path:
     """The path to hand FileResponse for GET /api/v1/agent/binary. Refuses
     to serve anything unless the manifest currently marks the pinned agent
     qualified AND the on-disk file's own hash still matches that exact
     pin -- catches a deploy that updated manifest.json but forgot to also
     update the served .exe, which would otherwise ship an unverified binary
-    to every real device's auto-upgrade check."""
+    to every real device's auto-upgrade check. A canary computer gets the
+    canary build instead, under the same hash check."""
+    canary = canary_pin(device_id) if device_id else None
+    if canary is not None:
+        want, path = canary
+        if hashlib.sha256(path.read_bytes()).hexdigest() != want:
+            raise HTTPException(503, "staged canary binary does not match its pin")
+        return path
     sha, qualified = agent_pin()
     if not qualified or not sha:
         raise HTTPException(503, "agent build not qualified for distribution")
@@ -797,7 +804,8 @@ def heartbeat(db: Session, device: Device, inst: Installation, body: dict) -> di
         pause = True
     provider_down = bool(site and site.provider_unavailable_until and as_utc(site.provider_unavailable_until) > now())
     compiled = overlay.get("bandwidth") or {}
-    agent_sha256, agent_qualified = agent_pin()
+    canary = canary_pin(device.id)
+    agent_sha256, agent_qualified = (canary[0], True) if canary else agent_pin()
     return {
         "schema_version": 1,
         "server_time": now().isoformat(),

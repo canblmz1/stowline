@@ -1139,7 +1139,7 @@ def hb(body: HeartbeatIn, db: Session = Depends(get_db), pair=Depends(agent_pair
 
 @app.get("/api/v1/agent/binary")
 def agent_binary(pair=Depends(agent_pair)):
-    path = services.agent_binary_for_download()
+    path = services.agent_binary_for_download(pair[0].id)
     return FileResponse(path, media_type="application/octet-stream", filename="stowline-agent.exe")
 
 
