@@ -38,7 +38,8 @@ jobs:
           New-Item -ItemType Directory -Force dist | Out-Null
           Copy-Item "releases/setup-single/Stowline Setup.exe" "dist/Stowline-Setup-$v.exe"
           Compress-Archive -Path releases/build/* -DestinationPath "dist/stowline-windows-x64-$v.zip"
-          Get-ChildItem dist | ForEach-Object { "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name } | Set-Content dist/SHA256SUMS.txt
+          $sums = Get-ChildItem dist | ForEach-Object { "{0}  {1}`n" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name }
+          [IO.File]::WriteAllText("$PWD/dist/SHA256SUMS.txt", ($sums -join ""))
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*
