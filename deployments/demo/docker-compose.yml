@@ -1,0 +1,91 @@
+# Try the admin panel with a made-up office - no Windows computers, no cloud
+# storage, nothing to configure:
+#
+#   cd deployments/demo
+#   docker compose up -d
+#
+# then open http://localhost:8080 and sign in as admin / demo.
+# Reset with `docker compose down -v`. For local trials only: lab mode,
+# plain HTTP and a known password.
+name: stowline-demo
+
+x-server: &server
+  image: ghcr.io/${STOWLINE_IMAGE_OWNER:-canblmz1}/stowline-server:${STOWLINE_VERSION:-latest}
+  environment: &env
+    STOWLINE_DATABASE_URL: postgresql+psycopg://stowline:demo@postgres:5432/stowline
+    STOWLINE_LAB_MODE: "true"
+    STOWLINE_ALLOW_INSECURE_HTTP: "true"
+    STOWLINE_ORG_NAME: Demo Office
+    STOWLINE_ADMIN_USERNAME: admin
+    STOWLINE_ADMIN_PASSWORD: demo
+    STOWLINE_GATEWAY_ADMIN_URL: http://gateway:8081
+    STOWLINE_GATEWAY_ADMIN_TOKEN: demo-gateway-token
+    STOWLINE_GATEWAY_PUBLIC_BASE: rest:http://127.0.0.1:8081
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: stowline
+      POSTGRES_PASSWORD: demo
+      POSTGRES_DB: stowline
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stowline -d stowline"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+
+  gateway:
+    image: ghcr.io/${STOWLINE_IMAGE_OWNER:-canblmz1}/stowline-gateway:${STOWLINE_VERSION:-latest}
+    environment:
+      STOWLINE_GATEWAY_ROOT: /data/store
+      STOWLINE_GATEWAY_REGISTRY: /data/registry.json
+      STOWLINE_GATEWAY_ADMIN_TOKEN: demo-gateway-token
+      STOWLINE_GATEWAY_PORT: "8081"
+    volumes:
+      - gwdata:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/health')"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+
+  server:
+    <<: *server
+    depends_on:
+      postgres: {condition: service_healthy}
+      gateway: {condition: service_healthy}
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+
+  worker:
+    <<: *server
+    command: stowline-worker
+    depends_on:
+      server: {condition: service_healthy}
+
+  # the fake office: enrolls computers and keeps a few backups running
+  seed:
+    <<: *server
+    command: python /demo/seed.py
+    environment:
+      <<: *env
+      DEMO_SERVER: http://server:8080
+    volumes:
+      - ./seed.py:/demo/seed.py:ro
+      - seedstate:/state
+    depends_on:
+      server: {condition: service_healthy}
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  gwdata:
+  seedstate:

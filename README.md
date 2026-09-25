@@ -17,6 +17,13 @@ Stowline backs up the work files of every Windows computer in your office — or
   <img src="docs/media/demo.gif" alt="Stowline in action: admin panel with live progress, the user's backup app, restoring a file, the one-file installer" width="100%">
 </p>
 
+**Try it in two minutes** — no Windows PCs, no storage account: a demo office with eight computers and live backups.
+
+```bash
+git clone https://github.com/canblmz1/stowline && cd stowline/deployments/demo
+docker compose up -d        # then open http://localhost:8080 — admin / demo
+```
+
 It grew out of a real multi-site business with ordinary office PCs and thin internet lines, and ran there in production before being published.
 
 ## Why Stowline
@@ -51,7 +58,7 @@ Caddy gets the HTTPS certificate on its own. Open `https://<your domain>`, sign 
 
 > The installer is not code-signed, so Windows SmartScreen asks once: *More info → Run anyway*.
 
-Just want to look around? `cd deployments/compose && docker compose up --build`, then open <http://localhost:8888> (admin / change-me-now). That is a lab setup without HTTPS — never for real data.
+Just want to look around? Start the [demo](deployments/demo) (`docker compose up -d` in `deployments/demo`, then <http://localhost:8080>, admin / demo). It is a lab setup without HTTPS and with a known password — never for real data.
 
 ## A closer look
 
@@ -83,6 +90,26 @@ Just want to look around? `cd deployments/compose && docker compose up --build`,
 ```
 
 More: [architecture and security model](docs/ARCHITECTURE.md).
+
+## How it compares
+
+Stowline is built for one situation: **many Windows office PCs, one or several sites with thin internet lines, backups going to cloud storage, and no IT person at every site.** For other situations another tool is often the better choice — and they are good tools.
+
+|  | Stowline | UrBackup | Veeam Agent for Windows (Free) | Duplicati |
+|---|---|---|---|---|
+| Central panel for all PCs | ✅ | ✅ | ➖ standalone; central management needs Veeam Backup & Replication | ➖ one web UI per PC |
+| Backs up to cloud storage (Drive, S3, B2…) | ✅ any rclone remote | ➖ to the server's disks | ➖ local disk, network share (OneDrive being retired) | ✅ |
+| Upload budget per office line, backups queued to fit | ✅ per site | ➖ per client / global throttle | ➖ per PC throttle | ➖ per PC throttle |
+| Storage credentials stay off the PCs | ✅ | ✅ | ➖ each PC holds its target's | ❌ each PC holds them |
+| Users restore their own files | ✅ into a separate folder | ✅ | ✅ | ✅ |
+| Open files (VSS) | ✅ | ✅ | ✅ | ✅ |
+| Disk images / bare-metal restore | ❌ files only | ✅ | ✅ | ❌ |
+| Mac / Linux computers | ❌ Windows only | ✅ | ➖ separate agents | ✅ |
+| License | Apache 2.0 + Commons Clause | AGPL-3.0 | proprietary, free edition | MIT |
+
+<sub>To the best of our knowledge as of September 2026 — corrections are welcome in an issue.</sub>
+
+**Pick something else if** you need disk images or bare-metal recovery (UrBackup, Veeam), you back up Macs or Linux machines, or you have a single PC (restic itself, or a GUI like Backrest, is simpler).
 
 ## Building from source
 
@@ -144,6 +171,15 @@ Sıradan ofis bilgisayarları ve kısıtlı internet hatları olan, birden çok 
 - 🗝️ **Kaybolmayan anahtarlar** — sunucuda isteğe bağlı Şifre Kasası ve anahtarı kâğıda / parola yöneticisine almak için bir araç.
 - 🔄 **Kendini günceller** — yeni sürümler HTTPS üzerinden, SHA-256 doğrulamasıyla, yedekleme yokken yüklenir; sorun olursa geri döner.
 - 🌍 **Türkçe ve İngilizce** arayüz.
+
+**İki dakikada deneyin** — Windows bilgisayar ya da depolama hesabı gerekmez; sekiz bilgisayarlı, canlı yedekleme yapan bir demo ofis açılır:
+
+```bash
+git clone https://github.com/canblmz1/stowline && cd stowline/deployments/demo
+docker compose up -d        # sonra http://localhost:8080 — admin / demo
+```
+
+**Diğerlerinden farkı:** UrBackup, Veeam Agent ve Duplicati iyi araçlar. Stowline'ı ayıran şey birden çok şubede, zayıf internet hatlarında çalışan çok sayıda Windows bilgisayarı buluta yedeklemek için yapılmış olması: şube başına upload bütçesi ve sıraya alma, bilgisayarlarda bulut şifresi olmaması, çalışanın dosyasını kendisinin geri yüklemesi. Disk imajı/bare-metal geri yükleme ve Mac/Linux desteği **yoktur**; bunlar gerekiyorsa UrBackup ya da Veeam daha uygun. Ayrıntılı tablo: [How it compares](#how-it-compares).
 
 **3 adımda kurulum:**
 1. **Sunucu:** Docker kurulu bir Linux sunucuda `deployments/compose` klasöründe `.env` dosyasını doldurup `docker compose -f docker-compose.prod.yml up -d` (ayrıntılar: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)).
