@@ -1,0 +1,23 @@
+{$STOWLINE_DOMAIN} {
+	# restic REST repositories -> gateway (only /restic/* is public)
+	handle /restic/* {
+		reverse_proxy gateway:8081 {
+			flush_interval -1
+		}
+	}
+	# setup wizard preflight: only the gateway's /health under /gw
+	handle_path /gw/* {
+		handle /health {
+			reverse_proxy gateway:8081
+		}
+		handle {
+			respond 404
+		}
+	}
+	# admin panel, agent API, enrollment
+	handle {
+		reverse_proxy server:8080 {
+			header_up X-Forwarded-Proto {scheme}
+		}
+	}
+}

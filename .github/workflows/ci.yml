@@ -1,0 +1,47 @@
+name: ci
+on:
+  push:
+  pull_request:
+jobs:
+  go:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.5"
+      - name: gofmt
+        run: |
+          $bad = gofmt -l .
+          if ($bad) {
+            Write-Error "gofmt needed:`n$bad"
+            exit 1
+          }
+      - name: Vet and test
+        run: |
+          go vet ./...
+          go test ./...
+      - name: Race (agent internals)
+        run: go test -race ./agent/internal/...
+  python:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Server and gateway tests
+        run: |
+          python -m pip install -e .\server[dev] -e .\gateway[dev]
+          python -m pytest .\server\tests -q
+          python -m pytest .\gateway\tests -q
+          python -m pytest .\tools\stowline-setup\tests -q
+  release-integrity:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: UI language layer is rebuilt from i18n/
+        run: python scripts/build-i18n.py --check

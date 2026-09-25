@@ -1,0 +1,46 @@
+# Stowline behind Caddy. caddy-enable.sh installs this file as
+# /etc/caddy/stowline.caddy (with backup.example.com replaced by your
+# domain) and imports it from /etc/caddy/Caddyfile; nothing else there is
+# touched. Caddy obtains and renews the HTTPS certificate on its own.
+#
+# No domain, only an IP address? Use the IP as the site address and add
+#     tls {
+#         issuer acme {
+#             profile shortlived
+#         }
+#     }
+# Let's Encrypt issues IP certificates only under that short-lived profile.
+backup.example.com {
+	# restic REST repositories -> gateway. Only /restic/* is public; the
+	# gateway's /admin/* API stays on loopback.
+	handle /restic/* {
+		reverse_proxy 127.0.0.1:18181 {
+			flush_interval -1
+		}
+	}
+
+	# The setup wizard's preflight checks <gateway_url>/health; expose only
+	# the gateway's health under /gw, nothing else of the gateway.
+	handle_path /gw/* {
+		handle /health {
+			reverse_proxy 127.0.0.1:18181
+		}
+		handle {
+			respond 404
+		}
+	}
+
+	# Admin panel, agent API, enrollment -> control plane
+	handle {
+		reverse_proxy 127.0.0.1:18180 {
+			header_up X-Forwarded-Proto {scheme}
+		}
+	}
+
+	log {
+		output file /var/log/caddy/stowline.access.log {
+			roll_size 20mb
+			roll_keep 5
+		}
+	}
+}

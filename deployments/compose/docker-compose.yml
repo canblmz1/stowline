@@ -1,0 +1,92 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-stowline}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-stowline-lab-only}
+      POSTGRES_DB: ${POSTGRES_DB:-stowline}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-stowline} -d ${POSTGRES_DB:-stowline}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  gateway:
+    build:
+      context: ../..
+      dockerfile: deployments/compose/Dockerfile.gateway
+    environment:
+      STOWLINE_GATEWAY_ROOT: ${STOWLINE_GATEWAY_ROOT:-/data/store}
+      STOWLINE_GATEWAY_REGISTRY: /data/registry.json
+      STOWLINE_GATEWAY_ADMIN_TOKEN: ${STOWLINE_GATEWAY_ADMIN_TOKEN:-lab-gateway-admin-token}
+      STOWLINE_GATEWAY_PORT: "8081"
+      STOWLINE_GATEWAY_SITE_LIMITS: ${STOWLINE_GATEWAY_SITE_LIMITS:-}
+      RCLONE_CONFIG: ${RCLONE_CONFIG:-}
+      RCLONE_CONFIG_PASS: ${RCLONE_CONFIG_PASS:-}
+    volumes:
+      - gwdata:/data
+      # Bind the encrypted rclone.conf only for Workspace qualification. Default lab store is local.
+      # Example: C:\Stowline\gateway\rclone\rclone.conf:/run/secrets/rclone.conf:ro
+    ports:
+      - "8081:8081"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  server:
+    build:
+      context: ../..
+      dockerfile: deployments/compose/Dockerfile.server
+    environment:
+      STOWLINE_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-stowline}:${POSTGRES_PASSWORD:-stowline-lab-only}@postgres:5432/${POSTGRES_DB:-stowline}
+      STOWLINE_ADMIN_USERNAME: ${STOWLINE_ADMIN_USERNAME:-admin}
+      STOWLINE_ADMIN_PASSWORD: ${STOWLINE_ADMIN_PASSWORD:-change-me-now}
+      STOWLINE_LAB_MODE: ${STOWLINE_LAB_MODE:-true}
+      STOWLINE_ALLOW_INSECURE_HTTP: "true"
+      STOWLINE_GATEWAY_ADMIN_URL: http://gateway:8081
+      STOWLINE_GATEWAY_ADMIN_TOKEN: ${STOWLINE_GATEWAY_ADMIN_TOKEN:-lab-gateway-admin-token}
+      STOWLINE_GATEWAY_PUBLIC_BASE: rest:http://127.0.0.1:8081
+    depends_on:
+      postgres:
+        condition: service_healthy
+      gateway:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  worker:
+    build:
+      context: ../..
+      dockerfile: deployments/compose/Dockerfile.server
+    command: stowline-worker
+    environment:
+      STOWLINE_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-stowline}:${POSTGRES_PASSWORD:-stowline-lab-only}@postgres:5432/${POSTGRES_DB:-stowline}
+      STOWLINE_LAB_MODE: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      server:
+        condition: service_healthy
+
+  proxy:
+    image: caddy:2-alpine
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    ports:
+      - "8888:80"
+    depends_on:
+      server:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  gwdata:

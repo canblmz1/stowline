@@ -1,0 +1,25 @@
+[Unit]
+Description=Stowline restic REST gateway (streams repositories to Google Drive)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=stowline
+Group=stowline
+WorkingDirectory=/opt/stowline/var/gateway
+EnvironmentFile=/etc/stowline/gateway.env
+Environment=PATH=/opt/stowline/bin:/usr/bin:/bin
+ExecStart=/opt/stowline/venv-gateway/bin/python /opt/stowline/app/current/gateway/entrypoint.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+# rclone rewrites the encrypted rclone.conf when Google tokens refresh
+ReadWritePaths=/opt/stowline/var
+MemoryMax=1200M
+
+[Install]
+WantedBy=multi-user.target

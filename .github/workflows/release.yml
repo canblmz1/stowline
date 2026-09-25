@@ -1,0 +1,72 @@
+name: release
+# Push a tag like v0.1.0 to publish:
+#   - "Stowline-Setup-<version>.exe": the generic one-file installer (asks for
+#     the server address), plus a zip of every Windows program and SHA256SUMS;
+#   - ghcr.io/<owner>/stowline-server and stowline-gateway container images.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.5"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Test
+        shell: pwsh
+        run: |
+          go test ./...
+          python -m pip install -e .\server[dev]
+          python -m pytest .\server\tests .\tools\stowline-setup\tests -q
+      - name: Build and package
+        shell: pwsh
+        run: |
+          $v = "${{ github.ref_name }}".TrimStart("v")
+          ./scripts/build-release.ps1 -OutDir releases/build -Version $v
+          ./scripts/fetch-pinned-binaries.ps1
+          python scripts/package-installer.py --build releases/build
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item "releases/setup-single/Stowline Setup.exe" "dist/Stowline-Setup-$v.exe"
+          Compress-Archive -Path releases/build/* -DestinationPath "dist/stowline-windows-x64-$v.zip"
+          Get-ChildItem dist | ForEach-Object { "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name } | Set-Content dist/SHA256SUMS.txt
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+
+  images:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        component: [server, gateway]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/stowline-${{ matrix.component }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=raw,value=latest
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deployments/compose/Dockerfile.${{ matrix.component }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}

@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Stowline Setup</title>
+  <script src="/static/i18n.js"></script>
+  <style>
+    :root {
+      color-scheme: light;
+      --paper: #f5f7fc; --card: #ffffff; --ink: #111c2d; --ink-2: #434a5c; --ink-3: #6b7285;
+      --line: #dfe5f2; --line-2: #eef2fa; --blue: #004fda; --blue-soft: #e6eeff; --green: #0f7b4a; --green-soft: #e3f4ea;
+      --warn: #a45f00; --warn-soft: #fff1dc; --bad: #ba1a1a; --bad-soft: #ffe4e1; --rail: #0b1b3f; --rail-ink: #c9d5f2;
+      --font: "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+      --font-display: "Segoe UI Variable Display", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root { color-scheme: dark; --paper: #0d1424; --card: #141d31; --ink: #e8edf8; --ink-2: #b9c2d6; --ink-3: #8a94ab; --line: #26314a; --line-2: #1b2539;
+        --blue: #7da2ff; --blue-soft: #1a2a52; --green: #5fd49a; --green-soft: #12301f; --warn: #f0b458; --warn-soft: #36270f; --bad: #ff8a80; --bad-soft: #3a1714; --rail: #080f1f; }
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body { margin: 0; background: var(--paper); color: var(--ink); font: 14px/1.5 var(--font); }
+    button, input, select { font: inherit; }
+    button { cursor: pointer; }
+    button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+    .num { font-variant-numeric: tabular-nums; }
+    .app { display: grid; grid-template-columns: 240px 1fr; height: 100%; }
+    aside { background: var(--rail); color: var(--rail-ink); padding: 22px 16px; display: flex; flex-direction: column; gap: 4px; }
+    .brand { display: flex; gap: 10px; align-items: center; color: #fff; font-weight: 600; margin: 0 6px 22px; }
+    .brand .logo { width: 30px; height: 30px; border-radius: 8px; background: #0f7b4a; display: grid; place-items: center; }
+    .brand .logo svg { width: 18px; height: 18px; }
+    .brand small { display: block; font-weight: 400; color: var(--rail-ink); font-size: 12px; }
+    .step { display: flex; gap: 12px; align-items: center; padding: 9px 10px; border-radius: 8px; font-size: 14px; }
+    .step .n svg { width: 13px; height: 13px; }
+    .step .n { line-height: 1; width: 24px; height: 24px; border-radius: 50%; border: 2px solid rgba(255,255,255,.25); display: grid; place-items: center; font-size: 12px; font-weight: 700; flex: none; }
+    .step.now { background: rgba(255,255,255,.08); color: #fff; font-weight: 600; }
+    .step.now .n { border-color: #7da2ff; color: #fff; }
+    .step.done .n { background: #0f7b4a; border-color: #0f7b4a; color: #fff; }
+    aside .spacer { flex: 1; }
+    aside .foot { font-size: 11px; opacity: .75; padding: 0 8px; line-height: 1.45; }
+    main { padding: 32px 40px 110px; overflow-y: auto; position: relative; }
+    .wrap { max-width: 820px; }
+    h1 { font: 600 26px/1.2 var(--font-display); margin: 0 0 6px; text-wrap: balance; }
+    .lede { color: var(--ink-3); margin: 0 0 24px; max-width: 62ch; }
+    h2 { font-size: 15px; margin: 22px 0 10px; }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; }
+    .checks { display: grid; gap: 2px; }
+    .check { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line-2); }
+    .check:first-child { border-top: 0; }
+    .dot { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; flex: none; }
+    .dot svg { width: 15px; height: 15px; }
+    .dot.ok { background: var(--green-soft); color: var(--green); }
+    .dot.bad { background: var(--bad-soft); color: var(--bad); }
+    .dot.warn { background: var(--warn-soft); color: var(--warn); }
+    .check .t { font-weight: 600; }
+    .check .s { font-size: 12px; color: var(--ink-3); overflow-wrap: anywhere; }
+    .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; }
+    .tile { text-align: left; background: var(--card); border: 1.5px solid var(--line); border-radius: 12px; padding: 16px 18px; color: var(--ink); }
+    .tile:hover { border-color: var(--blue); }
+    .tile[aria-pressed="true"] { border-color: var(--blue); box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 18%, transparent); }
+    .tile .big { font: 600 19px var(--font-display); }
+    .tile .s { font-size: 12px; color: var(--ink-3); margin-top: 2px; }
+    .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+    .chip { background: var(--card); border: 1.5px solid var(--line); color: var(--ink); border-radius: 999px; padding: 7px 16px; }
+    .chip[aria-pressed="true"] { border-color: var(--blue); background: var(--blue-soft); color: var(--blue); font-weight: 600; }
+    label.f { display: block; font-size: 13px; color: var(--ink-2); margin: 14px 0 6px; }
+    .field { width: 100%; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 8px; padding: 9px 11px; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
+    .list { background: var(--card); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+    .item { display: flex; gap: 12px; align-items: center; padding: 12px 16px; border-top: 1px solid var(--line-2); }
+    .item:first-child { border-top: 0; }
+    .item input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--blue); flex: none; }
+    .item .ic { width: 36px; height: 36px; border-radius: 8px; background: var(--blue-soft); color: var(--blue); display: grid; place-items: center; flex: none; }
+    .item .ic svg { width: 20px; height: 20px; }
+    .item .ic.warn { background: var(--warn-soft); color: var(--warn); }
+    .item .main { flex: 1; min-width: 0; }
+    .item .t { font-weight: 600; }
+    .item .p { font-size: 12px; color: var(--ink-3); overflow-wrap: anywhere; }
+    .item .meta { font-size: 12px; color: var(--ink-3); text-align: right; white-space: nowrap; }
+    .item .confirm { display: flex; gap: 6px; align-items: center; font-size: 12px; color: var(--warn); margin-top: 4px; }
+    .btn { display: inline-flex; align-items: center; gap: 8px; border-radius: 8px; padding: 10px 18px; border: 1px solid var(--line); background: var(--card); color: var(--ink); font-weight: 600; }
+    .btn svg { width: 18px; height: 18px; }
+    .btn.primary { background: var(--blue); border-color: var(--blue); color: #fff; }
+    .btn.green { background: #0f7b4a; border-color: #0f7b4a; color: #fff; }
+    .btn:disabled { opacity: .55; cursor: default; }
+    .btn.ghost { background: none; border-color: transparent; color: var(--blue); }
+    .footer { position: fixed; left: 240px; right: 0; bottom: 0; background: color-mix(in srgb, var(--paper) 92%, transparent); backdrop-filter: blur(6px); border-top: 1px solid var(--line); padding: 14px 40px; display: flex; gap: 10px; align-items: center; }
+    .footer .grow { flex: 1; color: var(--ink-3); font-size: 13px; }
+    .banner { display: flex; gap: 10px; padding: 12px 14px; border-radius: 10px; font-size: 13px; margin: 14px 0; }
+    .banner svg { width: 18px; height: 18px; flex: none; margin-top: 1px; }
+    .banner.warn { background: var(--warn-soft); color: var(--warn); }
+    .banner.bad { background: var(--bad-soft); color: var(--bad); }
+    .banner.info { background: var(--blue-soft); color: var(--ink-2); }
+    .banner.ok { background: var(--green-soft); color: var(--green); }
+    .summary { display: grid; grid-template-columns: max-content 1fr; gap: 8px 22px; margin: 0; }
+    .summary dt { color: var(--ink-3); }
+    .summary dd { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+    details { margin-top: 14px; font-size: 13px; color: var(--ink-3); }
+    summary { cursor: pointer; }
+    code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 12px; overflow-wrap: anywhere; }
+    .bar { height: 8px; background: var(--line-2); border-radius: 999px; overflow: hidden; margin: 18px 0 8px; }
+    .bar i { display: block; width: 35%; height: 100%; background: var(--blue); border-radius: 999px; animation: slide 1.3s ease-in-out infinite; }
+    @keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(300%); } }
+    .done-card { text-align: center; padding: 30px 20px; }
+    .done-card .big { width: 64px; height: 64px; border-radius: 50%; background: var(--green-soft); color: var(--green); display: grid; place-items: center; margin: 0 auto 14px; }
+    .done-card .big svg { width: 34px; height: 34px; }
+    .skeleton { height: 14px; background: var(--line-2); border-radius: 6px; margin: 10px 0; }
+    input[type=time] { font-size: 22px; padding: 8px 12px; width: auto; }
+    @media (max-width: 760px) { .app { grid-template-columns: 1fr; } aside { display: none; } .footer { left: 0; padding: 12px 16px; } main { padding: 22px 16px 110px; } .grid2 { grid-template-columns: 1fr; } }
+    @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside>
+      <div class="brand"><div class="logo"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 8.2-7 10-4-1.8-7-5.5-7-10V6z"/><path d="M12 8v6M9 11.5l3 3 3-3"/></svg></div><div>Stowline Setup<small>Yedekleme kurulumu <span id="stowline-lang-slot"></span></small></div></div>
+      <div id="steps"></div>
+      <div class="spacer"></div>
+      <div class="foot">Kurulum bu bilgisayara Stowline yedekleme hizmetini ve “Stowline Backups” programını ekler.</div>
+    </aside>
+    <main id="main"><div class="wrap"><div class="skeleton" style="width:40%"></div><div class="skeleton" style="width:70%"></div></div></main>
+  </div>
+  <div class="footer" id="footer" hidden></div>
+  <script>
+    // Read the one-time wizard session token from the URL main() opened us
+    // with, then scrub it from the visible address bar/history immediately.
+    // Every /api/local/* call attaches it as a custom header: an HTML form
+    // (the classic same-machine CSRF vector against a localhost admin API)
+    // cannot set a custom header, so this is not just a body/query check.
+    const TOKEN = new URLSearchParams(location.search).get("t") || "";
+    if (window.history && window.history.replaceState) window.history.replaceState(null, "", location.pathname);
+
+    const $ = (s) => document.querySelector(s);
+    const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    const UI_LOCALE = window.stowlineLang === "en" ? "en-GB" : "tr-TR";
+    const nf = new Intl.NumberFormat(UI_LOCALE, { maximumFractionDigits: 1 });
+    const size = (b) => { b = Number(b) || 0; return b >= 1073741824 ? nf.format(b / 1073741824) + " GB" : b >= 1048576 ? nf.format(b / 1048576) + " MB" : nf.format(b / 1024) + " KB"; };
+    const count = (n) => new Intl.NumberFormat(UI_LOCALE).format(Number(n) || 0);
+    const ICON = {
+      ok: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
+      bad: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+      warn: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 7v6M12 17h.01"/></svg>',
+      folder: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
+      mail: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg>',
+      file: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z"/><path d="M14 3v5h5"/></svg>',
+      plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
+      info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>',
+    };
+
+    // Every call gets a client-side timeout so a stuck/slow request looks
+    // different from a frozen page. /api/local/install chains several
+    // minutes-long steps (repository init, secrets provisioning, service
+    // install) against a real network, so it gets a much longer allowance.
+    const api = async (path, opts = {}, timeoutMs = 30000) => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      let res;
+      try {
+        res = await fetch(path, { headers: { "Content-Type": "application/json", "X-Wizard-Token": TOKEN }, signal: controller.signal, ...opts });
+      } catch (e) {
+        if (e.name === "AbortError") throw new Error(`Sunucu ${Math.round(timeoutMs / 1000)} saniyedir yanıt vermedi. İşlem arka planda sürüyor olabilir; bir süre bekleyip tekrar deneyin.`);
+        throw new Error(`Kurulum hizmetine bağlanılamadı (${e.message}). Kurulum penceresi kapandıysa yeniden başlatın.`);
+      } finally { clearTimeout(timer); }
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || data.message || res.status);
+      return data;
+    };
+
+    const STEPS = ["Kontrol", "Şube ve departman", "Klasörler", "Yedekleme saati", "Özet ve kurulum"];
+    const DEPT_LABEL = { IK: "İK", Satis: "Satış", Yonetim: "Yönetim", Diger: "Diğer…" };
+    // site names come from the server (STOWLINE_SITES_FILE), via /api/local/catalog
+    const siteName = (id) => { const s = ((state.catalog || {}).sites || []).find((x) => x.id === id); return (s && s.display_name) || id || ""; };
+    const CAT_LABEL = {
+      known_folder_desktop: "Masaüstü", known_folder_documents: "Belgeler", known_folder_pictures: "Resimler", known_folder_videos: "Videolar", known_folder_music: "Müzik",
+      downloads: "İndirilenler", office_files: "Office dosyaları", extra: "Eklediğiniz klasör", outlook_pst: "Outlook e-postaları", outlook_ost: "Outlook önbelleği",
+      sensitive: "Hassas dosya", game: "Oyun dosyaları",
+    };
+    // The discovery/estimate endpoints are shared with the admin tools and
+    // answer in English; the person installing sees Turkish.
+    const TR_NOTES = [
+      [/measured capacity is required/i, "Bu şubenin internet hızı henüz ölçülmemiş, bu yüzden ilk yedeğin süresi tahmin edilemiyor. IT ölçüm girdiğinde tahmin görünür; kurulum yine de yapılabilir."],
+      [/OST is a local cache/i, "Outlook'un kendi önbelleği; e-postaların asıl kopyası sunucuda. Yedeklenmesi gerekmez."],
+      [/Possible secret or credential file/i, "Şifre ya da anahtar içerebilecek bir dosya. Özellikle seçmezseniz yedeklenmez."],
+      [/Downloads/i, "İndirilenler genelde internetten yeniden alınabilir; varsayılan olarak yedeklenmez."],
+      [/game/i, "Oyun dosyaları iş verisi değildir; yedeklenmez."],
+    ];
+    const trNote = (t) => { const m = TR_NOTES.find(([re]) => re.test(String(t || ""))); return m ? m[1] : t; };
+    const catLabel = (c) => CAT_LABEL[c.category] || (String(c.category || "").startsWith("known_folder") ? String(c.path || "").split("\\").pop() : c.category);
+
+    const state = { screen: 1, identity: null, catalog: null, discovery: null, selected: {}, confirmed: {}, org: { department: "", username: "admin", password: "", preferred: "12:00" }, manifest: null, estimate: null, preflight: null, busy: "", error: "", result: null };
+
+    function renderSteps() {
+      $("#steps").innerHTML = STEPS.map((s, i) => `<div class="step ${i + 1 < state.screen ? "done" : i + 1 === state.screen ? "now" : ""}"><span class="n">${i + 1 < state.screen ? ICON.ok : i + 1}</span>${esc(s)}</div>`).join("");
+    }
+
+    function footer(backOk, nextLabel, nextEnabled = true, hint = "") {
+      const f = $("#footer");
+      f.hidden = false;
+      f.innerHTML = `<button type="button" class="btn ghost" id="back" ${backOk && !state.busy ? "" : "disabled"}>‹ Geri</button><div class="grow">${esc(state.busy || hint)}</div><button type="button" class="btn ${state.screen === 5 ? "green" : "primary"}" id="next" ${nextEnabled && !state.busy ? "" : "disabled"}>${esc(state.busy ? "Lütfen bekleyin…" : nextLabel)}</button>`;
+    }
+
+    function check(ok, title, sub, tone) {
+      const t = tone || (ok ? "ok" : "bad");
+      return `<div class="check"><span class="dot ${t}">${ICON[t]}</span><div><div class="t">${esc(title)}</div>${sub ? `<div class="s">${esc(sub)}</div>` : ""}</div></div>`;
+    }
+
+    // ---------- 1. Kontrol ----------
+    function screen1() {
+      const i = state.identity || {}, p = state.preflight || {};
+      const disk = (i.disks || [])[0] || {};
+      const net = !!p.ok || !!i.synthetic;
+      const errs = p.errors || [];
+      const lowDisk = disk.free_bytes && disk.free_bytes < 5 * 1073741824;
+      const askServer = !i.control_plane_url && !i.synthetic;
+      const serverCard = askServer || state.serverTyped
+        ? `<div class="card" style="margin-bottom:16px"><label class="f" for="server">Yedekleme sunucusunun adresi</label>
+            <div style="display:flex;gap:8px"><input class="field" id="server" placeholder="https://backup.sirketiniz.com" value="${esc(state.serverInput || i.control_plane_url || "")}" autocomplete="url" />
+            <button type="button" class="btn primary" id="connect">Bağlan</button></div>
+            <p style="color:var(--ink-3);font-size:13px;margin:6px 0 0">Adresi IT ekibinizden alın.</p></div>`
+        : "";
+      return `<div class="wrap"><h1>Bu bilgisayar kuruluma hazır mı?</h1>
+        <p class="lede"><b>${esc(i.hostname || "Bu bilgisayar")}</b>: Stowline bu bilgisayardaki iş dosyalarını her gün şifreleyerek şirketin yedekleme alanına yedekleyecek. Önce birkaç şeyi kontrol ediyoruz.</p>
+        ${serverCard}
+        <div class="card checks">
+          ${askServer ? check(false, "Yedekleme sunucusu seçilmedi", "Yukarıya sunucunun adresini yazıp “Bağlan”a basın.") : check(net, net ? "Yedekleme sunucusuna ulaşılıyor" : "Yedekleme sunucusuna ulaşılamıyor", net ? "İnternet ve Stowline sunucusu hazır." : "İnternet bağlantısını kontrol edin; sorun sürerse IT'ye haber verin.")}
+          ${check(!!i.sha_match, i.sha_match ? "Kurulum dosyaları doğrulandı" : "Kurulum dosyaları doğrulanamadı", i.sha_match ? "Program imzası şirketin onayladığı sürümle aynı." : "Bu kurulum paketi değiştirilmiş ya da eksik. Kurulum durdurulacak.")}
+          ${check(!!i.elevated, i.elevated ? "Yönetici izni alındı" : "Yönetici izni gerekli", i.elevated ? "" : "Programı sağ tıklayıp “Yönetici olarak çalıştır” ile açın.")}
+          ${check(!lowDisk, "Disk alanı", disk.free_bytes ? `${size(disk.free_bytes)} boş / ${size(disk.total_bytes)}` : "", lowDisk ? "warn" : "ok")}
+        </div>
+        ${i.synthetic ? `<div class="banner info">${ICON.info}<div><b>Deneme modu:</b> bu çalıştırmada hiçbir şey kurulmaz ve bilgisayar kaydedilmez; yalnızca ekranlar denenir.</div></div>` : ""}
+        ${errs.length ? `<details><summary>Teknik ayrıntılar (IT için)</summary><ul>${errs.map((e) => `<li><code>${esc(e)}</code></li>`).join("")}</ul></details>` : ""}
+      </div>`;
+    }
+
+    // ---------- 2. Şube ve departman ----------
+    function screen2() {
+      const sites = state.catalog.sites || [];
+      const deps = state.catalog.departments || [];
+      const o = state.org;
+      const custom = o.department === "Other" || (o.department && !deps.includes(o.department));
+      const needsUrl = !(state.identity && state.identity.control_plane_url);
+      return `<div class="wrap"><h1>Bu bilgisayar nerede, kimin?</h1>
+        <p class="lede">Yönetim panelinde bilgisayar bu bilgilere göre gruplanır; yedekleme saatleri de şubeye göre belirlenir.</p>
+        <h2>Panelde görünecek ad</h2>
+        <input class="field" id="displayName" maxlength="64" placeholder="${esc((state.identity || {}).hostname || "")} (boş bırakılırsa bu kullanılır)" value="${esc(o.display_name || "")}" />
+        <p style="color:var(--ink-3);font-size:12px;margin:6px 0 0">Örn. “Muhasebe - Ayşe”. Yalnızca panelde görünen addır; Windows'taki bilgisayar adı değişmez. Sonradan panelden de değiştirilebilir.</p>
+        <h2>Şube</h2>
+        <div class="tiles">${sites.map((s) => `<button type="button" class="tile" data-site="${esc(s.id)}" aria-pressed="${o.site_id === s.id}"><div class="big">${esc(s.display_name || s.id)}</div><div class="s num">Yedekleme ${esc(s.eligibility_start)}–${esc(s.preferred_latest_start)} arası başlar</div></button>`).join("")}</div>
+        <h2>Departman</h2>
+        <div class="chips">${deps.map((d) => `<button type="button" class="chip" data-dept="${esc(d)}" aria-pressed="${o.department === d || (d === "Other" && custom)}">${esc(DEPT_LABEL[d] || d)}</button>`).join("")}</div>
+        ${custom ? `<label class="f" for="customDept">Departman adı</label><input class="field" id="customDept" maxlength="64" placeholder="Örn. Yedek Parça" value="${esc(o.department === "Other" ? "" : o.department)}" />` : ""}
+        <h2>Yönetici onayı</h2>
+        <p class="lede" style="margin-bottom:6px">Bilgisayarı sisteme kaydetmek için Stowline yönetim paneli hesabınızla onaylayın. Şifre yalnızca bu kayıt için kullanılır, saklanmaz.</p>
+        <div class="grid2">
+          <div><label class="f" for="user">Kullanıcı adı</label><input class="field" id="user" autocomplete="username" value="${esc(o.username)}" /></div>
+          <div><label class="f" for="pass">Şifre</label><input class="field" id="pass" type="password" autocomplete="current-password" value="${esc(o.password)}" /></div>
+        </div>
+        ${needsUrl ? `<label class="f" for="url">Yönetim paneli adresi</label><input class="field" id="url" placeholder="https://…" value="${esc(o.control_plane_url || "")}" />` : ""}
+      </div>`;
+    }
+
+    // ---------- 3. Klasörler ----------
+    function isChecked(i, c) { return state.selected[i] !== undefined ? state.selected[i] : !!c.default_selected; }
+    function needsConfirm(c) { return c.requires_explicit || c.category === "sensitive"; }
+    function screen3() {
+      const d = state.discovery;
+      if (!d) return `<div class="wrap"><h1>Yedeklenecek klasörler</h1><p class="lede">Bilgisayardaki iş dosyaları aranıyor… Dosyaların içi okunmaz, yalnızca adları ve boyutları sayılır.</p><div class="bar"><i></i></div></div>`;
+      const cands = d.candidates || [];
+      let bytes = 0, files = 0;
+      cands.forEach((c, i) => { if (isChecked(i, c)) { bytes += Number(c.bytes) || 0; files += Number(c.file_count) || 0; } });
+      return `<div class="wrap"><h1>Hangi klasörler yedeklensin?</h1>
+        <p class="lede">İş dosyalarının bulunduğu yerleri bulduk ve önerilenleri işaretledik. Oyunlar, İndirilenler ve Outlook önbelleği gereksiz olduğu için kapalı gelir.</p>
+        <div class="list">${cands.length ? cands.map((c, i) => {
+          const on = isChecked(i, c);
+          const warn = needsConfirm(c) || c.warning;
+          return `<div class="item"><input type="checkbox" data-cand="${i}" ${on ? "checked" : ""} aria-label="${esc(catLabel(c))}" /><div class="ic ${warn ? "warn" : ""}">${c.kind === "file" || c.category === "outlook_pst" ? ICON.file : ICON.folder}</div><div class="main"><div class="t">${esc(catLabel(c))}</div><div class="p">${esc(c.path)}</div>${c.warning ? `<div class="p" style="color:var(--warn)">${esc(trNote(c.warning))}</div>` : ""}${needsConfirm(c) && on ? `<label class="confirm"><input type="checkbox" data-confirm="${i}" ${state.confirmed[i] ? "checked" : ""} /> Bu hassas dosyanın yedeklenmesini onaylıyorum</label>` : ""}</div><div class="meta num">${esc(size(c.bytes))}<br>${esc(count(c.file_count))} dosya</div></div>`;
+        }).join("") : `<div class="item"><div class="main"><div class="p">Önerilecek klasör bulunamadı. Aşağıdan klasör ekleyin.</div></div></div>`}</div>
+        <p style="margin-top:14px"><button type="button" class="btn" id="browseFolder">${ICON.plus}Başka klasör ekle</button> <span id="browseMsg" style="color:var(--ink-3);font-size:13px"></span></p>
+        <p class="num" style="color:var(--ink-2)">Seçilen: <b>${esc(size(bytes))}</b> · ${esc(count(files))} dosya</p>
+      </div>`;
+    }
+
+    // ---------- 4. Saat ----------
+    function screen4() {
+      const site = state.org.site_id;
+      const pol = (state.catalog.sites || []).find((s) => s.id === site) || {};
+      const e = state.estimate || {};
+      const m = state.manifest || {};
+      return `<div class="wrap"><h1>Yedekleme her gün saat kaçta başlasın?</h1>
+        <p class="lede">${esc(siteName(site))} şubesinde yedekleme ${esc(pol.eligibility_start)} ile ${esc(pol.preferred_latest_start)} arasında başlayabilir. Bilgisayar o saatte kapalıysa açıldığında telafi edilir.</p>
+        <div class="card">
+          <label class="f" for="pref" style="margin-top:0">Başlangıç saati</label>
+          <input class="field num" id="pref" type="time" value="${esc(state.org.preferred || "12:00")}" min="${esc(pol.eligibility_start)}" max="${esc(pol.preferred_latest_start)}" />
+          <p style="color:var(--ink-3);margin:12px 0 0">Seçilen veri: <b class="num">${esc(size(m.selected_logical_bytes))}</b>${e.estimated_human ? ` · İlk yedek tahmini: <b>${esc(e.estimated_human)}</b>` : ""}</p>
+          ${(e.warnings || []).map((w) => `<div class="banner warn">${ICON.info}<div>${esc(trNote(w))}</div></div>`).join("")}
+        </div>
+        <div class="banner info">${ICON.info}<div>İlk yedek, dosyaların tamamını gönderdiği için uzun sürebilir; sonraki günlerde yalnızca değişenler gönderilir.</div></div>
+      </div>`;
+    }
+
+    // ---------- 5. Özet ----------
+    function screen5() {
+      const o = state.org, m = state.manifest || {}, e = state.estimate || {};
+      if (state.result) return resultView(state.result);
+      return `<div class="wrap"><h1>Her şey hazır</h1><p class="lede">Aşağıdakileri kontrol edip kurulumu başlatın. Birkaç dakika sürebilir; bu sırada pencereyi kapatmayın.</p>
+        <div class="card"><dl class="summary">
+          <dt>Bilgisayar</dt><dd>${esc(o.display_name || (state.identity || {}).hostname)}${o.display_name ? ` <span style="color:var(--ink-3);font-weight:400">(${esc((state.identity || {}).hostname)})</span>` : ""}</dd>
+          <dt>Şube</dt><dd>${esc(siteName(o.site_id))}</dd>
+          <dt>Departman</dt><dd>${esc(DEPT_LABEL[o.department] || o.department)}</dd>
+          <dt>Yedeklenecek</dt><dd>${(m.source_roots || []).map((r) => esc(r)).join("<br>") || "—"}</dd>
+          <dt>Toplam</dt><dd class="num">${esc(size(m.selected_logical_bytes))} · ${esc(count(m.selected_file_count))} dosya</dd>
+          <dt>Her gün</dt><dd class="num">${esc(o.preferred || "12:00")}${e.estimated_human ? ` · ilk yedek tahmini ${esc(e.estimated_human)}` : ""}</dd>
+        </dl></div>
+        ${state.busy ? `<div class="bar"><i></i></div><p style="color:var(--ink-3)">Hizmet kuruluyor, şifreli yedek alanı hazırlanıyor ve bilgisayar kaydediliyor…</p>` : ""}
+        ${state.error ? `<div class="banner bad">${ICON.info}<div>${esc(state.error)}</div></div>` : ""}
+      </div>`;
+    }
+
+    function resultView(out) {
+      const canStart = out.service_state === "Stopped" && out.first_backup_requires_operator_action;
+      return `<div class="wrap"><div class="card done-card">
+        <div class="big">${ICON.ok}</div>
+        <h1>Kurulum tamamlandı</h1>
+        <p class="lede" style="margin:6px auto 18px">Bu bilgisayar artık Stowline ile yedekleniyor. Masaüstündeki <b>Stowline Backups</b> simgesinden durumu görebilir, klasör ekleyebilir ve dosya geri yükleyebilirsiniz.</p>
+        ${canStart ? `<button type="button" class="btn green" id="startBackup">İlk yedeklemeyi şimdi başlat</button>` : `<div class="banner ok" style="justify-content:center">${ICON.ok}<div>${out.backup_started ? "İlk yedekleme başladı." : "İlk yedekleme, seçilen saatte kendiliğinden başlayacak."}</div></div>`}
+        <p id="startMsg" style="color:var(--ink-3)"></p>
+        <details style="text-align:left"><summary>Teknik ayrıntılar (IT için)</summary><pre style="white-space:pre-wrap"><code>${esc(out.note || "")}\nHizmet: ${esc(out.service_state || out.service || "")}</code></pre></details>
+      </div></div>`;
+    }
+
+    function render() {
+      renderSteps();
+      $("#main").innerHTML = ({ 1: screen1, 2: screen2, 3: screen3, 4: screen4, 5: screen5 })[state.screen]();
+      const i = state.identity || {}, p = state.preflight || {};
+      // A synthetic run never installs or enrolls, so only a real run is
+      // gated on the verified package; elevation is always enforced again by
+      // the install step itself.
+      if (state.screen === 1) footer(false, "Başla", (!!p.ok || !!i.synthetic) && (!!i.sha_match || !!i.synthetic), (!!p.ok || !!i.synthetic) ? "" : "Bağlantı sorunu giderilmeden devam edilemez.");
+      else if (state.screen === 2) footer(true, "Devam", !!state.org.site_id, state.org.site_id ? "" : "Önce şubeyi seçin.");
+      else if (state.screen === 3) footer(true, "Devam", !!state.discovery);
+      else if (state.screen === 4) footer(true, "Devam");
+      else if (state.result) $("#footer").hidden = true;
+      else footer(true, "Kurulumu başlat");
+    }
+
+    function readOrg() {
+      const o = state.org;
+      if ($("#user")) o.username = $("#user").value.trim();
+      if ($("#pass")) o.password = $("#pass").value;
+      if ($("#url")) o.control_plane_url = $("#url").value.trim();
+      if ($("#customDept")) o.customDepartment = $("#customDept").value.trim();
+      if ($("#displayName")) o.display_name = $("#displayName").value.trim();
+    }
+
+    function selectedItems() {
+      const items = [];
+      ((state.discovery || {}).candidates || []).forEach((c, i) => {
+        if (!isChecked(i, c)) return;
+        const rec = { ...c };
+        if (state.confirmed[i]) rec.confirmed = true;
+        if (c.category === "downloads") rec.confirmed = true;
+        items.push(rec);
+      });
+      return items;
+    }
+    function selectedItemsFromManifest() { return ((state.manifest && state.manifest.source_roots) || []).map((path) => ({ path, kind: "file" })); }
+
+    async function pickFolder() {
+      const msg = $("#browseMsg");
+      try {
+        let path = null;
+        if (typeof window.stowlinePickFolder === "function") path = await window.stowlinePickFolder();
+        else { msg.textContent = "Klasör seçme penceresi açılıyor…"; path = (await api("/api/local/browse-folder", { method: "POST", body: "{}" }, 310000)).path; }
+        if (!path) { msg.textContent = ""; return; }
+        state.extraRoots = state.extraRoots || [];
+        if (!state.extraRoots.includes(path)) state.extraRoots.push(path);
+        msg.textContent = "Klasör taranıyor…";
+        state.discovery = await api("/api/local/discover", { method: "POST", body: JSON.stringify({ extra_roots: state.extraRoots }) }, 180000);
+        state.manifest = null;
+        render();
+      } catch (e) { msg.textContent = e.message; }
+    }
+
+    async function next() {
+      const o = state.org;
+      state.error = "";
+      readOrg();
+      if (state.screen === 2) {
+        if (!o.site_id) return;
+        if (o.department === "Other" || (o.department && !(state.catalog.departments || []).includes(o.department))) {
+          if (!o.customDepartment) { alert("Departman adını yazın."); return; }
+          o.department = o.customDepartment;
+        }
+        if (!o.department) { alert("Departmanı seçin."); return; }
+        const synthetic = !!(state.identity && state.identity.synthetic);
+        if (!synthetic && (!o.username || !o.password)) { alert("Yönetici kullanıcı adı ve şifresini girin."); return; }
+        if (!synthetic && !(state.identity && state.identity.control_plane_url) && !o.control_plane_url) { alert("Yönetim paneli adresini girin."); return; }
+        state.screen = 3; render();
+        if (!state.discovery) { state.discovery = await api("/api/local/discover", { method: "POST", body: "{}" }, 180000); render(); }
+        return;
+      }
+      if (state.screen === 3) {
+        const cands = (state.discovery || {}).candidates || [];
+        const missing = cands.findIndex((c, i) => isChecked(i, c) && needsConfirm(c) && !state.confirmed[i]);
+        if (missing >= 0) { alert("İşaretlediğiniz hassas dosya için onay kutusunu da işaretleyin ya da seçimi kaldırın."); return; }
+        if (!selectedItems().length) { alert("En az bir klasör seçin."); return; }
+        state.busy = "Seçim hazırlanıyor…"; render();
+        try { state.manifest = await api("/api/local/compile", { method: "POST", body: JSON.stringify({ selected: selectedItems() }) }, 180000); }
+        finally { state.busy = ""; }
+        state.screen = 4; render();
+        await refreshEstimate();
+        return;
+      }
+      if (state.screen === 4) {
+        o.preferred = $("#pref").value || "12:00";
+        state.busy = "Kontrol ediliyor…"; render();
+        try { await refreshEstimate(); } finally { state.busy = ""; }
+        state.screen = 5; render();
+        return;
+      }
+      if (state.screen === 5) {
+        state.busy = "Kuruluyor…"; render();
+        try {
+          state.result = await api("/api/local/install", { method: "POST", body: JSON.stringify({
+            site_id: o.site_id, department: o.department, custom_department: "", control_plane_url: o.control_plane_url || (state.identity || {}).control_plane_url || "",
+            username: o.username, password: o.password, preferred_start_hhmm: o.preferred || "12:00", selected: selectedItemsFromManifest(), confirm_install: true,
+            display_name: o.display_name || "",
+          }) }, 35 * 60 * 1000);
+          o.password = "";
+        } catch (e) { state.error = "Kurulum tamamlanamadı: " + e.message; }
+        state.busy = ""; render();
+        return;
+      }
+      state.screen += 1; render();
+    }
+
+    async function refreshEstimate() {
+      const o = state.org;
+      try {
+        state.estimate = await api("/api/local/estimate", { method: "POST", body: JSON.stringify({ site_id: o.site_id, preferred_start_hhmm: o.preferred || "12:00", logical_bytes: (state.manifest && state.manifest.selected_logical_bytes) || 0 }) });
+      } catch (e) { state.estimate = { warnings: [e.message] }; }
+      if (state.screen === 4) render();
+    }
+
+    document.addEventListener("click", async (e) => {
+      const t = e.target.closest("button");
+      if (!t) return;
+      if (t.id === "next") { try { await next(); } catch (err) { state.busy = ""; alert(err.message); render(); } return; }
+      if (t.id === "back") { readOrg(); state.screen = Math.max(1, state.screen - 1); render(); return; }
+      if (t.dataset.site) { readOrg(); state.org.site_id = t.dataset.site; render(); return; }
+      if (t.dataset.dept) { readOrg(); state.org.department = t.dataset.dept; render(); return; }
+      if (t.id === "browseFolder") { t.disabled = true; await pickFolder(); t.disabled = false; return; }
+      if (t.id === "connect") {
+        const input = $("#server");
+        state.serverInput = input ? input.value.trim() : "";
+        if (!state.serverInput) { alert("Önce sunucunun adresini yazın."); return; }
+        t.disabled = true;
+        t.textContent = "Bağlanılıyor…";
+        try {
+          const res = await api("/api/local/server", { method: "POST", body: JSON.stringify({ url: state.serverInput }) }, 60000);
+          state.preflight = res.preflight;
+          if (res.ok) {
+            state.catalog = res.catalog;
+            state.identity = await api("/api/local/identity");
+            state.org.control_plane_url = state.identity.control_plane_url || "";
+            state.serverTyped = true;
+          }
+        } catch (err) {
+          state.preflight = { ok: false, errors: [err.message] };
+        }
+        render();
+        return;
+      }
+      if (t.id === "startBackup") {
+        t.disabled = true;
+        try {
+          // 90s: wizard.py's own service-start call gets a 60s budget server-side.
+          const started = await api("/api/local/start-first-backup", { method: "POST", body: JSON.stringify({ confirm_start: true }) }, 90000);
+          $("#startMsg").textContent = started.backup_started
+            ? "İlk yedekleme başladı. Bu pencereyi kapatabilirsiniz; ilerlemeyi masaüstündeki Stowline Backups'den görebilirsiniz."
+            : (started.message || "Hizmet durumu: " + (started.service_state || started.service || "bilinmiyor"));
+          t.remove();
+        } catch (err) { $("#startMsg").textContent = "Başlatılamadı: " + err.message; t.disabled = false; }
+      }
+    });
+    document.addEventListener("change", (e) => {
+      const c = e.target.closest("[data-cand]");
+      if (c) { state.selected[Number(c.dataset.cand)] = c.checked; state.manifest = null; render(); return; }
+      const k = e.target.closest("[data-confirm]");
+      if (k) state.confirmed[Number(k.dataset.confirm)] = k.checked;
+    });
+
+    async function start() {
+      try {
+        state.identity = await api("/api/local/identity");
+        state.catalog = await api("/api/local/catalog");
+        state.preflight = await api("/api/local/preflight");
+        state.org.control_plane_url = (state.identity || {}).control_plane_url || "";
+        state.org.site_id = "";
+        render();
+      } catch (e) {
+        // Not location.reload(): the token was already scrubbed from the URL,
+        // so a reload would turn every retry into a 401. Re-run start().
+        $("#main").innerHTML = `<div class="wrap"><h1>Kurulum başlatılamadı</h1><div class="banner bad">${ICON.info}<div>${esc(e.message)}</div></div><button type="button" class="btn primary" id="retryStart">Tekrar dene</button></div>`;
+        $("#retryStart").onclick = start;
+      }
+    }
+    start();
+  </script>
+</body>
+</html>

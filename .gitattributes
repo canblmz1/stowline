@@ -1,0 +1,13 @@
+* text=auto eol=lf
+
+*.exe binary
+*.dll binary
+*.zip binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.pdf binary
+
+# Windows batch files need CRLF
+*.cmd text eol=crlf

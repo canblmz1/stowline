@@ -1,0 +1,25 @@
+[Unit]
+Description=Stowline worker (health evaluation, housekeeping)
+After=network-online.target postgresql.service stowline-control.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=stowline
+Group=stowline
+# the app keeps a relative ./var (rate limits, caches): give it a writable cwd
+WorkingDirectory=/opt/stowline/var/control
+EnvironmentFile=/etc/stowline/control.env
+ExecStart=/opt/stowline/venv-control/bin/stowline-worker
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/stowline/var
+MemoryMax=400M
+
+[Install]
+WantedBy=multi-user.target

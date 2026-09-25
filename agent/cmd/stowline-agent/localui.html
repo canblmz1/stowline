@@ -1,0 +1,834 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Stowline Backups</title>
+<script src="/i18n.js"></script>
+<style>
+:root {
+  color-scheme: light;
+  --paper: #f5f7fc; --card: #ffffff; --ink: #111c2d; --ink-2: #434a5c; --ink-3: #6b7285;
+  --line: #dfe5f2; --line-2: #eef2fa; --navy: #002869; --blue: #004fda; --blue-soft: #e6eeff;
+  --good: #0f7b4a; --good-soft: #e3f4ea; --warn: #a45f00; --warn-soft: #fff1dc; --bad: #ba1a1a; --bad-soft: #ffe4e1;
+  --rail: #0b1b3f; --rail-ink: #c9d5f2; --rail-active: #1c3470; --ring-track: #e4eaf6;
+  --shadow: 0 1px 2px rgba(16,32,72,.06), 0 8px 24px rgba(16,32,72,.06);
+  --font: "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  --font-display: "Segoe UI Variable Display", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  --mono: "Cascadia Mono", Consolas, ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --paper: #0d1424; --card: #141d31; --ink: #e8edf8; --ink-2: #b9c2d6; --ink-3: #8a94ab;
+    --line: #26314a; --line-2: #1b2539; --navy: #b1c5ff; --blue: #7da2ff; --blue-soft: #1a2a52;
+    --good: #5fd49a; --good-soft: #12301f; --warn: #f0b458; --warn-soft: #36270f; --bad: #ff8a80; --bad-soft: #3a1714;
+    --rail: #080f1f; --rail-ink: #aab8da; --rail-active: #1a2a52; --ring-track: #22304d;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.25);
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(--font); font-size: 14px; line-height: 1.5; }
+[hidden] { display: none !important; }
+button { font: inherit; cursor: pointer; }
+button:focus-visible, input:focus-visible, textarea:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.num { font-variant-numeric: tabular-nums; }
+.app { display: grid; grid-template-columns: 216px 1fr; height: 100%; }
+nav { background: var(--rail); padding: 18px 10px 14px; display: flex; flex-direction: column; gap: 2px; }
+.brand { display: flex; align-items: center; gap: 10px; color: #fff; padding: 0 10px 16px; font-weight: 600; }
+.brand .logo { width: 28px; height: 28px; border-radius: 8px; background: #1f4fd8; display: grid; place-items: center; }
+.brand .logo svg { width: 17px; height: 17px; }
+nav button { display: flex; align-items: center; gap: 12px; background: none; border: 0; color: var(--rail-ink); padding: 10px 12px; border-radius: 8px; text-align: left; font-size: 14px; }
+nav button svg { width: 20px; height: 20px; flex: none; }
+nav button:hover { background: rgba(255,255,255,.05); color: #fff; }
+nav button[aria-current="page"] { background: var(--rail-active); color: #fff; font-weight: 600; }
+nav .spacer { flex: 1; }
+nav .foot { font-size: 11px; color: var(--rail-ink); opacity: .75; padding: 8px 12px 2px; line-height: 1.45; }
+main { padding: 28px 36px 40px; overflow-y: auto; min-width: 0; }
+.wrap { max-width: 860px; }
+h1 { font-family: var(--font-display); font-size: 25px; line-height: 1.2; font-weight: 600; margin: 0 0 4px; text-wrap: balance; }
+.lede { color: var(--ink-3); margin: 0 0 22px; max-width: 64ch; }
+h2 { font-size: 15px; font-weight: 600; margin: 0 0 12px; }
+.btn { display: inline-flex; align-items: center; gap: 8px; border-radius: 8px; padding: 9px 16px; border: 1px solid var(--line); background: var(--card); color: var(--ink); font-weight: 600; font-size: 14px; }
+.btn svg { width: 18px; height: 18px; }
+.btn.primary { background: var(--blue); border-color: var(--blue); color: #fff; }
+.btn.primary:hover { filter: brightness(1.08); }
+.btn:disabled { opacity: .55; cursor: default; filter: none; }
+.btn.ghost { border-color: transparent; background: none; color: var(--blue); padding-inline: 8px; }
+.btn.danger-ghost { border-color: transparent; background: none; color: var(--bad); padding: 6px 8px; font-weight: 500; }
+.hero { display: grid; grid-template-columns: auto 1fr; gap: 28px; align-items: center; padding: 24px; border-radius: 12px; border: 1px solid var(--line); background: linear-gradient(180deg, var(--card), var(--line-2)); }
+.hero.good { border-color: color-mix(in srgb, var(--good) 30%, var(--line)); }
+.hero.busy { border-color: color-mix(in srgb, var(--blue) 35%, var(--line)); }
+.hero.warn { border-color: color-mix(in srgb, var(--warn) 35%, var(--line)); }
+.ring { position: relative; width: 168px; height: 168px; }
+.ring > svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+.ring .track { fill: none; stroke: var(--ring-track); stroke-width: 12; }
+.ring .bar { fill: none; stroke: var(--blue); stroke-width: 12; stroke-linecap: round; transition: stroke-dashoffset .6s ease; }
+.ring.good .bar { stroke: var(--good); }
+.ring.warn .bar { stroke: var(--warn); }
+.ring.spin > svg { animation: spin 1.6s linear infinite; }
+@keyframes spin { to { transform: rotate(270deg); } }
+.ring .center { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; }
+.ring .pct { font-family: var(--font-display); font-size: 40px; font-weight: 600; line-height: 1; letter-spacing: -.02em; }
+.ring .pct small { font-size: 20px; font-weight: 500; }
+.ring .sub { font-size: 12px; color: var(--ink-3); margin-top: 4px; }
+.ring .glyph { width: 56px; height: 56px; margin: 0 auto; }
+.ring.good .glyph { color: var(--good); }
+.ring.warn .glyph { color: var(--warn); }
+.pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 999px; }
+.pill .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.pill.good { background: var(--good-soft); color: var(--good); }
+.pill.busy { background: var(--blue-soft); color: var(--blue); }
+.pill.warn { background: var(--warn-soft); color: var(--warn); }
+.pill.busy .dot { animation: pulse 1.4s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .3; } }
+.hero h1 { margin-top: 10px; }
+.hero .detail { color: var(--ink-2); margin: 0 0 16px; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.steps { display: flex; margin: 0 0 14px; padding: 0; list-style: none; flex-wrap: wrap; row-gap: 6px; }
+.steps li { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-3); }
+.steps li + li::before { content: ""; width: 18px; height: 2px; background: var(--line); margin: 0 8px; }
+.hero .steps li { font-size: 12px; }
+.hero .steps li + li::before { width: 12px; margin: 0 6px; }
+.steps li .n { width: 20px; height: 20px; border-radius: 50%; border: 2px solid var(--line); display: grid; place-items: center; font-size: 11px; font-weight: 700; }
+.steps li.done { color: var(--good); }
+.steps li.done .n { border-color: var(--good); background: var(--good); color: #fff; }
+.steps li.now { color: var(--ink); font-weight: 600; }
+.steps li.now .n { border-color: var(--blue); color: var(--blue); }
+.facts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 16px; }
+.fact { padding: 14px 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
+.fact .k { font-size: 12px; color: var(--ink-3); letter-spacing: .02em; }
+.fact .v { font-size: 17px; font-weight: 600; margin-top: 2px; }
+.fact .s { font-size: 12px; color: var(--ink-3); }
+.list { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--card); }
+.row { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-top: 1px solid var(--line-2); min-width: 0; }
+.row:first-child { border-top: 0; }
+.row .ic { width: 36px; height: 36px; border-radius: 8px; background: var(--blue-soft); color: var(--blue); display: grid; place-items: center; flex: none; }
+.row .ic svg { width: 20px; height: 20px; }
+.row .main { flex: 1; min-width: 0; }
+.row .t { font-weight: 600; overflow-wrap: anywhere; }
+.row .p { font-size: 12px; color: var(--ink-3); overflow-wrap: anywhere; }
+.row .meta { font-size: 12px; color: var(--ink-3); text-align: right; white-space: nowrap; }
+.toolbar { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; flex-wrap: wrap; }
+.toolbar .grow { flex: 1; }
+.chips { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; align-items: center; }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px; border: 1px dashed var(--line); background: none; color: var(--ink-2); font-size: 13px; }
+.chip:hover { border-color: var(--blue); color: var(--blue); }
+.chip svg { width: 16px; height: 16px; }
+.note { font-size: 12px; color: var(--ink-3); margin-top: 12px; }
+.banner { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-radius: 10px; font-size: 13px; margin-bottom: 14px; }
+.banner.good { background: var(--good-soft); color: var(--good); }
+.banner.info { background: var(--blue-soft); color: var(--ink-2); }
+.banner.warn { background: var(--warn-soft); color: var(--warn); }
+.banner.bad { background: var(--bad-soft); color: var(--bad); }
+.banner svg { width: 18px; height: 18px; flex: none; margin-top: 1px; }
+.backups { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
+.bk { text-align: left; border: 1px solid var(--line); background: var(--card); border-radius: 10px; padding: 12px 14px; color: var(--ink); }
+.bk:hover { border-color: var(--blue); }
+.bk .d { font-weight: 600; }
+.bk .s { font-size: 12px; color: var(--ink-3); }
+.crumbs { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; font-size: 13px; margin-bottom: 10px; }
+.crumbs button { border: 0; background: none; color: var(--blue); padding: 2px 4px; border-radius: 4px; }
+.crumbs span { color: var(--ink-3); }
+.search { flex: 1; min-width: 200px; display: flex; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: 8px; padding: 0 10px; background: var(--card); }
+.search svg { width: 16px; height: 16px; color: var(--ink-3); flex: none; }
+.search input { border: 0; outline: 0; background: none; color: var(--ink); font: inherit; padding: 8px 0; width: 100%; }
+.file-row input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--blue); flex: none; }
+.file-row .ic.dir { background: var(--warn-soft); color: var(--warn); }
+.file-row .ic.doc { background: var(--line-2); color: var(--ink-2); }
+.file-row .open { border: 0; background: none; color: var(--ink); font: inherit; font-weight: 600; padding: 0; text-align: left; overflow-wrap: anywhere; }
+.file-row .open:hover { color: var(--blue); text-decoration: underline; }
+.dock { position: sticky; bottom: 0; margin-top: 14px; display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-radius: 10px; background: #0b2a6b; color: #fff; flex-wrap: wrap; box-shadow: var(--shadow); }
+.dock .grow { flex: 1; }
+.dock .btn { background: #fff; color: #0b1b3f; border-color: #fff; }
+.dock .btn.soft { background: transparent; color: #fff; border-color: rgba(255,255,255,.4); }
+.bar { height: 10px; border-radius: 999px; background: var(--ring-track); overflow: hidden; }
+.bar > i { display: block; height: 100%; background: var(--blue); border-radius: 999px; transition: width .5s ease; }
+.bar.indet > i { width: 35% !important; animation: slide 1.3s ease-in-out infinite; }
+@keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(300%); } }
+.card { border: 1px solid var(--line); border-radius: 12px; padding: 22px; background: var(--card); }
+.card .big { font-family: var(--font-display); font-size: 36px; font-weight: 600; letter-spacing: -.02em; line-height: 1.1; }
+.card .line { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; color: var(--ink-3); margin-top: 8px; flex-wrap: wrap; }
+.center-card { text-align: center; padding: 34px 22px; }
+.badge { width: 56px; height: 56px; border-radius: 50%; display: grid; place-items: center; margin: 0 auto 12px; }
+.badge svg { width: 30px; height: 30px; }
+.badge.ok { background: var(--good-soft); color: var(--good); }
+.badge.err { background: var(--bad-soft); color: var(--bad); }
+.path { font-family: var(--mono); font-size: 12px; background: var(--line-2); padding: 8px 12px; border-radius: 8px; display: inline-block; margin: 10px 0 16px; overflow-wrap: anywhere; max-width: 100%; }
+.tl { list-style: none; margin: 0; padding: 0; }
+.tl li { display: grid; grid-template-columns: 118px 16px 1fr; gap: 12px; padding: 10px 0; }
+.tl .when { font-size: 12px; color: var(--ink-3); text-align: right; padding-top: 1px; }
+.tl .mk { position: relative; }
+.tl .mk::before { content: ""; position: absolute; left: 7px; top: 18px; bottom: -22px; width: 2px; background: var(--line); }
+.tl li:last-child .mk::before { display: none; }
+.tl .mk i { position: absolute; left: 2px; top: 4px; width: 12px; height: 12px; border-radius: 50%; background: var(--good); border: 2px solid var(--card); box-shadow: 0 0 0 1px var(--good); }
+.tl .mk i.r { background: var(--blue); box-shadow: 0 0 0 1px var(--blue); }
+.tl .mk i.x { background: var(--bad); box-shadow: 0 0 0 1px var(--bad); }
+.tl .what { font-weight: 600; }
+.tl .why { font-size: 12px; color: var(--ink-3); overflow-wrap: anywhere; }
+textarea, .field { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 10px; font: inherit; color: var(--ink); background: var(--card); }
+textarea { min-height: 110px; resize: vertical; }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; font-size: 13px; margin: 0; }
+.kv dt { color: var(--ink-3); }
+.kv dd { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+.two { display: grid; grid-template-columns: 1.3fr 1fr; gap: 16px; }
+.panel { border: 1px solid var(--line); border-radius: 10px; padding: 18px; background: var(--card); }
+.scrim { position: fixed; inset: 0; background: rgba(8,15,31,.45); display: grid; place-items: center; padding: 16px; z-index: 10; }
+.dialog { width: min(460px, 100%); background: var(--card); color: var(--ink); border-radius: 12px; padding: 22px; box-shadow: 0 20px 60px rgba(0,0,0,.3); }
+.dialog h2 { font-size: 17px; }
+.dialog p { color: var(--ink-2); margin: 0 0 16px; overflow-wrap: anywhere; }
+.dialog .actions { justify-content: flex-end; }
+.toast { position: fixed; right: 20px; bottom: 20px; background: var(--ink); color: var(--paper); padding: 10px 16px; border-radius: 8px; font-size: 13px; box-shadow: var(--shadow); z-index: 20; max-width: 420px; }
+.offline { max-width: 520px; margin: 12vh auto; text-align: center; }
+.skeleton { height: 14px; border-radius: 6px; background: var(--line-2); margin: 8px 0; }
+@media (max-width: 760px) {
+  .app { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+  nav { flex-direction: row; overflow-x: auto; padding: 8px; }
+  .brand, nav .spacer, nav .foot { display: none; }
+  nav button { flex-direction: column; gap: 2px; font-size: 11px; padding: 6px 10px; }
+  main { padding: 20px 16px; }
+  .hero { grid-template-columns: 1fr; justify-items: center; text-align: center; }
+  .hero .actions { justify-content: center; }
+  .facts, .two { grid-template-columns: 1fr; }
+  .tl li { grid-template-columns: 84px 16px 1fr; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <nav aria-label="Bölümler">
+    <div class="brand"><div class="logo"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 8.2-7 10-4-1.8-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg></div>Stowline Backups<span id="stowline-lang-slot"></span></div>
+    <button type="button" data-view="durum"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 8.2-7 10-4-1.8-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg>Durum</button>
+    <button type="button" data-view="klasorler"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Klasörlerim</button>
+    <button type="button" data-view="geri"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><path d="M12 8v4l3 2"/></svg>Geri Yükle</button>
+    <button type="button" data-view="gecmis"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M8 6h13M8 12h13M8 18h13"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/></svg>Geçmiş</button>
+    <button type="button" data-view="yardim"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6v.6"/><path d="M12 17h.01"/></svg>Yardım</button>
+    <div class="spacer"></div>
+    <div class="foot">Yedekler şifrelenerek şirketin yedekleme alanında saklanır.</div>
+  </nav>
+  <main id="main" tabindex="-1"><div class="wrap"><div class="skeleton" style="width:40%"></div><div class="skeleton" style="width:70%"></div></div></main>
+</div>
+
+<script>
+(() => {
+  "use strict";
+  const $ = (sel, root = document) => root.querySelector(sel);
+  const esc = (v) => String(v == null ? "" : v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+
+  // Native helpers exist only inside the Stowline Backups.exe window; in a
+  // plain browser the page still works, with typed paths and no copy step.
+  const native = {
+    has: (name) => typeof window[name] === "function",
+    pickFolder: () => window.stowlinePickFolder(),
+    openFolder: (p) => window.stowlineOpenFolder(p),
+    knownFolders: () => window.stowlineKnownFolders(),
+    deliver: (job) => window.stowlineDeliverRestore(JSON.stringify(job)),
+  };
+
+  const I = {
+    folder: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
+    file: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z"/><path d="M14 3v5h5"/></svg>',
+    drive: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 14h.01M11 14h6"/></svg>',
+    plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
+    play: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5z"/></svg>',
+    check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
+    alert: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 8v5M12 16.5h.01"/><path d="M10.3 3.9L2.6 17.5A2 2 0 0 0 4.3 20.5h15.4a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>',
+    x: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+    search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>',
+    info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>',
+    open: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v1"/><path d="M3 7v10a2 2 0 0 0 2 2h12l4-8H7l-4 8"/></svg>',
+    mail: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg>',
+  };
+
+  // ---------- formatting ----------
+  const UI_LOCALE = window.stowlineLang === "en" ? "en-GB" : "tr-TR";
+  const nf1 = new Intl.NumberFormat(UI_LOCALE, { maximumFractionDigits: 1 });
+  const nf0 = new Intl.NumberFormat(UI_LOCALE, { maximumFractionDigits: 0 });
+  function bytes(b) {
+    b = Number(b) || 0;
+    if (b >= 1073741824) return nf1.format(b / 1073741824) + " GB";
+    if (b >= 1048576) return nf0.format(b / 1048576) + " MB";
+    if (b >= 1024) return nf0.format(b / 1024) + " KB";
+    return nf0.format(b) + " B";
+  }
+  const count = (n) => nf0.format(Number(n) || 0);
+  const validDate = (v) => { if (!v) return null; const d = new Date(v); return isNaN(d) || d.getFullYear() < 2000 ? null : d; };
+  function when(v) {
+    const d = validDate(v);
+    if (!d) return "—";
+    const now = new Date();
+    const day = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const diff = Math.round((today - day) / 86400000);
+    const hm = d.toLocaleTimeString(UI_LOCALE, { hour: "2-digit", minute: "2-digit" });
+    if (diff === 0) return "Bugün " + hm;
+    if (diff === 1) return "Dün " + hm;
+    return d.toLocaleDateString(UI_LOCALE, { day: "numeric", month: "long" }) + " " + hm;
+  }
+  function duration(ms) {
+    const s = Math.round((Number(ms) || 0) / 1000);
+    if (s < 60) return s + " sn";
+    const m = Math.floor(s / 60);
+    if (m < 60) return m + " dk " + (s % 60) + " sn";
+    return Math.floor(m / 60) + " sa " + (m % 60) + " dk";
+  }
+  function remaining(seconds) {
+    const m = Math.round(seconds / 60);
+    if (seconds < 60) return "1 dakikadan az";
+    if (m < 60) return m + " dakika";
+    const h = Math.floor(m / 60);
+    return h + " saat" + (m % 60 ? " " + (m % 60) + " dakika" : "");
+  }
+  // Snapshot paths are "/C/Users/…"; show them the way Windows does.
+  function winPath(p) {
+    const parts = String(p || "").split("/").filter(Boolean);
+    if (!parts.length) return "";
+    const drive = parts[0].length === 1 ? parts[0] + ":" : parts[0];
+    return [drive].concat(parts.slice(1)).join("\\");
+  }
+  const label = (name, prefix) => (prefix === "" && name.length === 1 ? `Yerel Disk (${name}:)` : name);
+
+  // Real-sample rate estimate: at least 3 samples spanning 15 s, never a guess.
+  function makeRate() {
+    let samples = [];
+    return {
+      reset() { samples = []; },
+      add(done) {
+        const t = Date.now();
+        if (samples.length && done < samples[samples.length - 1].v) samples = [];
+        samples.push({ t, v: done });
+        samples = samples.filter((s) => t - s.t < 90000);
+      },
+      perSec() {
+        if (samples.length < 3) return 0;
+        const a = samples[0], b = samples[samples.length - 1];
+        const span = (b.t - a.t) / 1000;
+        return span >= 15 && b.v > a.v ? (b.v - a.v) / span : 0;
+      },
+    };
+  }
+
+  // ---------- api ----------
+  async function api(path, body) {
+    const opt = body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json", "X-Stowline-Local": "1" }, body: JSON.stringify(body) };
+    const r = await fetch(path, opt);
+    let data = {};
+    try { data = await r.json(); } catch (e) {}
+    if (!r.ok) { const err = new Error(data.error || "HTTP " + r.status); err.status = r.status; err.data = data; throw err; }
+    return data;
+  }
+
+  function toast(msg) {
+    const t = document.createElement("div");
+    t.className = "toast"; t.setAttribute("role", "status"); t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), 3200);
+  }
+
+  function ask({ title, text, ok, cancel = "Vazgeç", danger = false, input = null }) {
+    return new Promise((resolve) => {
+      const s = document.createElement("div");
+      s.className = "scrim";
+      s.innerHTML = `<div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dlg-t"><h2 id="dlg-t">${esc(title)}</h2><p>${esc(text)}</p>${input ? `<input class="field" id="dlg-in" placeholder="${esc(input)}" style="margin-bottom:16px" />` : ""}<div class="actions"><button type="button" class="btn" data-no>${esc(cancel)}</button><button type="button" class="btn ${danger ? "" : "primary"}" data-yes style="${danger ? "color:var(--bad)" : ""}">${esc(ok)}</button></div></div>`;
+      document.body.appendChild(s);
+      const done = (v) => { s.remove(); resolve(v); };
+      s.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (e.target.closest("[data-yes]")) done(input ? ($("#dlg-in", s).value || "").trim() || false : true);
+        else if (e.target.closest("[data-no]") || e.target === s) done(false);
+      });
+      s.addEventListener("keydown", (e) => { if (e.key === "Escape") done(false); if (e.key === "Enter" && input) done(($("#dlg-in", s).value || "").trim() || false); });
+      ($("#dlg-in", s) || $("[data-yes]", s)).focus();
+    });
+  }
+
+  // ---------- state ----------
+  const S = {
+    view: "durum",
+    status: null, offline: false,
+    folders: null, known: [],
+    snapshots: null,
+    history: null,
+    backupRate: makeRate(), restoreRate: makeRate(),
+    queuedAt: 0,
+    r: { step: 1, snap: null, prefix: "", entries: null, truncated: false, picked: new Map(), query: "", results: null, loading: false, error: "", job: null, delivering: false },
+  };
+
+  function ring(pct, cls, labelText, inner) {
+    const rad = 70, c = 2 * Math.PI * rad;
+    const off = c * (1 - Math.max(0, Math.min(100, pct)) / 100);
+    return `<div class="ring ${cls}" role="img" aria-label="${esc(labelText)}"><svg viewBox="0 0 168 168"><circle class="track" cx="84" cy="84" r="${rad}"/><circle class="bar" cx="84" cy="84" r="${rad}" stroke-dasharray="${c.toFixed(1)}" stroke-dashoffset="${off.toFixed(1)}"/></svg><div class="center">${inner}</div></div>`;
+  }
+
+  // ---------- Durum ----------
+  function viewDurum() {
+    const st = S.status || {};
+    const last = st.last_success;
+    const lastAttempt = st.last_attempt;
+    const restore = st.restore;
+    const restoreCard = restore
+      ? `<div class="banner info" style="margin-top:16px">${I.info}<div>Bir geri yükleme sürüyor: <b class="num">%${Math.round(restore.percent_done || 0)}</b>. <button type="button" class="btn ghost" data-go="geri" style="padding:0 4px">Ayrıntılar</button></div></div>`
+      : "";
+    if (st.backing_up) {
+      const phase = st.phase || "preparing";
+      const pct = Number(st.percent_done) || 0;
+      const at = phase === "preparing" ? 0 : phase === "scanning" ? 1 : 2;
+      const steps = ["Hazırlanıyor", "Dosyalar okunuyor", "Buluta yükleniyor"];
+      let line = "Yedeklenecek dosyalar belirleniyor…";
+      if (phase === "scanning") {
+        const rate = S.backupRate.perSec();
+        const left = rate > 0 ? "yaklaşık " + remaining((st.total_bytes - st.bytes_done) / rate) + " kaldı" : "süre hesaplanıyor";
+        line = `${count(st.files_done)} / ${count(st.total_files)} dosya · ${left}`;
+      } else if (phase === "finalizing") {
+        line = "Tüm dosyalar okundu; şifreli veri buluta yükleniyor. Bu son adım birkaç dakika sürebilir.";
+      }
+      const inner = phase === "preparing"
+        ? `<div><div class="pct">…</div><div class="sub">Hazırlanıyor</div></div>`
+        : `<div><div class="pct num">${Math.round(pct)}<small>%</small></div><div class="sub num">${esc(bytes(st.bytes_done))} / ${esc(bytes(st.total_bytes))}</div></div>`;
+      return `<div class="wrap">
+        <section class="hero busy" aria-live="polite">
+          ${ring(phase === "preparing" ? 18 : pct, phase === "preparing" ? "spin" : "", "Yüzde " + Math.round(pct), inner)}
+          <div>
+            <span class="pill busy"><span class="dot"></span>Yedekleniyor</span>
+            <h1>${phase === "finalizing" ? "Neredeyse bitti" : "Dosyalarınız yedekleniyor"}</h1>
+            <ol class="steps">${steps.map((p, i) => `<li class="${i < at ? "done" : i === at ? "now" : ""}"><span class="n">${i < at ? "✓" : i + 1}</span>${p}</li>`).join("")}</ol>
+            <p class="detail num">${esc(line)}</p>
+          </div>
+        </section>
+        <div class="banner info" style="margin-top:16px">${I.info}<div>Çalışmaya devam edebilirsiniz. Yedekleme internet hattını şirket kuralına göre sınırlı kullanır; bilgisayar kapanırsa bir sonraki açılışta yeniden dener.</div></div>
+        ${restoreCard}
+      </div>`;
+    }
+    const lastDate = last ? validDate(last.ended_at) : null;
+    const ageH = lastDate ? (Date.now() - lastDate) / 3600000 : Infinity;
+    const failed = lastAttempt && lastAttempt.outcome && lastAttempt.outcome !== "SUCCEEDED";
+    const queued = S.queuedAt && Date.now() - S.queuedAt < 180000;
+    let tone = "good", pill = "Her şey yolunda", title = "Dosyalarınız güvende";
+    let detail = `Son yedek <b>${esc(when(last && last.ended_at))}</b> alındı. Bilgisayar açık olduğu sürece her gün kendiliğinden yedeklenir.`;
+    if (!last) { tone = "warn"; pill = "Henüz yedek yok"; title = "İlk yedek bekleniyor"; detail = "Bu bilgisayarın henüz tamamlanmış bir yedeği yok. İsterseniz şimdi başlatabilirsiniz."; }
+    else if (failed && ageH > 26) { tone = "warn"; pill = "Dikkat"; title = "Son yedekleme tamamlanamadı"; detail = `En son başarılı yedek <b>${esc(when(last.ended_at))}</b>. Şimdi yeniden deneyebilir ya da IT'ye haber verebilirsiniz.`; }
+    else if (ageH > 48) { tone = "warn"; pill = "Dikkat"; title = "Yedek biraz eskidi"; detail = `En son yedek <b>${esc(when(last.ended_at))}</b> alındı. Bilgisayar yedekleme saatinde kapalı kalmış olabilir.`; }
+    const glyph = tone === "good" ? I.check : I.alert;
+    return `<div class="wrap">
+      <section class="hero ${tone}">
+        ${ring(100, tone, title, `<div><div class="glyph">${glyph}</div><div class="sub">${tone === "good" ? "Güvende" : "Dikkat"}</div></div>`)}
+        <div>
+          <span class="pill ${tone}"><span class="dot"></span>${esc(pill)}</span>
+          <h1>${esc(title)}</h1>
+          <p class="detail">${detail}</p>
+          <div class="actions">
+            <button type="button" class="btn primary" id="backup-now" ${queued ? "disabled" : ""}>${I.play}${queued ? "Sıraya alındı, birazdan başlayacak…" : "Şimdi yedekle"}</button>
+            <button type="button" class="btn" data-go="geri">Dosya geri yükle</button>
+          </div>
+        </div>
+      </section>
+      <div class="facts">
+        <div class="fact"><div class="k">Son yedek</div><div class="v num">${esc(when(last && last.ended_at))}</div><div class="s">${last && last.duration_ms ? esc(duration(last.duration_ms)) + " sürdü" : "—"}</div></div>
+        <div class="fact"><div class="k">Korunan veri</div><div class="v num">${last ? esc(bytes(last.total_bytes)) : "—"}</div><div class="s num">${last ? esc(count(last.total_files)) + " dosya" : ""}</div></div>
+        <div class="fact"><div class="k">Son yedekte eklenen</div><div class="v num">${last ? esc(bytes(last.data_added)) : "—"}</div><div class="s">Yalnızca değişen kısımlar gönderilir</div></div>
+      </div>
+      ${restoreCard}
+    </div>`;
+  }
+
+  // ---------- Klasörlerim ----------
+  function suggestions() {
+    const have = new Set(((S.folders && S.folders.folders) || []).map((f) => String(f.path).toLowerCase()));
+    return S.known.filter((k) => !have.has(String(k.path).toLowerCase()));
+  }
+
+  function viewKlasorler() {
+    if (!S.folders) return `<div class="wrap"><h1>Klasörlerim</h1><div class="skeleton" style="width:60%"></div></div>`;
+    const list = S.folders.folders || [];
+    const total = list.reduce((a, f) => a + (Number(f.bytes) || 0), 0);
+    const anyPending = list.some((f) => f.pending);
+    const sugg = suggestions();
+    return `<div class="wrap">
+      <h1>Klasörlerim</h1>
+      <p class="lede">Buradaki klasörler her gün kendiliğinden yedeklenir. Bir klasörü çıkarmak eski yedekleri silmez.</p>
+      <div class="toolbar">
+        <div class="grow num" style="color:var(--ink-3)">${list.length} klasör${anyPending ? "" : " · " + esc(bytes(total))}</div>
+        <button type="button" class="btn primary" id="add-folder">${I.plus}Klasör ekle</button>
+      </div>
+      <div class="list">
+        ${list.length ? list.map((f, i) => `<div class="row"><div class="ic">${I.folder}</div><div class="main"><div class="t">${esc(f.name || f.path)}</div><div class="p">${esc(f.path)}</div></div><div class="meta num">${f.pending ? "hesaplanıyor…" : `${f.complete ? "" : "en az "}${esc(bytes(f.bytes))}<br>${esc(count(f.files))} dosya`}</div><button type="button" class="btn danger-ghost" data-remove="${i}">Çıkar</button></div>`).join("") : `<div class="row"><div class="main"><div class="p">Henüz klasör seçilmedi. “Klasör ekle” ile başlayın.</div></div></div>`}
+      </div>
+      ${sugg.length ? `<div class="chips"><span style="font-size:12px;color:var(--ink-3)">Önerilen:</span>${sugg.map((s, i) => `<button type="button" class="chip" data-suggest="${i}">${I.plus}${esc(s.name)}</button>`).join("")}</div>` : ""}
+      <p class="note">Değişiklik bir sonraki yedeklemede geçerli olur. Program dosyaları ve Windows klasörleri şirket kuralı gereği yedeklenmez.</p>
+    </div>`;
+  }
+
+  async function saveFolders(roots, confirmed = []) {
+    try {
+      S.folders = await api("/api/folders", { source_roots: roots, confirmed_sensitive: confirmed });
+      render();
+      return true;
+    } catch (e) {
+      if (e.data && e.data.error === "sensitive_confirmation_required") {
+        const list = e.data.needs_confirmation || [];
+        const ok = await ask({ title: "Bu klasör hassas bilgi içerebilir", text: list.join(", ") + " — şifre, anahtar ya da sistem dosyaları içeriyor olabilir. Yine de yedeklensin mi?", ok: "Evet, yedeklensin" });
+        return ok ? saveFolders(roots, confirmed.concat(list)) : false;
+      }
+      toast("Klasörler kaydedilemedi: " + friendly(e));
+      return false;
+    }
+  }
+
+  async function addFolder(path) {
+    if (!path) return;
+    const roots = ((S.folders && S.folders.source_roots) || []).slice();
+    if (roots.some((r) => r.toLowerCase() === path.toLowerCase())) { toast("Bu klasör zaten yedekleniyor."); return; }
+    if (await saveFolders(roots.concat([path]))) toast("“" + path.split("\\").pop() + "” eklendi. Bir sonraki yedekte korunacak.");
+  }
+
+  // ---------- Geri Yükle ----------
+  function friendlyRestoreError(e) {
+    const m = String(e || "");
+    if (m === "interrupted") return "Bilgisayar yeniden başladığı için geri yükleme yarıda kaldı. Lütfen tekrar deneyin.";
+    if (/admission|CAPACITY|SITE_/i.test(m)) return "Şubenin internet hattı şu an başka yedeklemelerle meşgul. Birkaç dakika sonra tekrar deneyin.";
+    if (/control plane|connect|dial|timeout/i.test(m)) return "Stowline sunucusuna ulaşılamadı. İnternet bağlantısını kontrol edip tekrar deneyin.";
+    return "Geri yükleme tamamlanamadı. Tekrar deneyin; sürerse Yardım bölümünden IT'ye haber verin.";
+  }
+  function friendly(e) {
+    const m = (e && e.message) || "";
+    if (m === "not_connected") return "Bu bilgisayar Stowline sunucusuna bağlı değil.";
+    if (m === "already_running") return "Zaten bir yedekleme sürüyor.";
+    if (/window/i.test(m)) return "Şu an yedekleme saatleri dışında. IT'nin belirlediği saatte kendiliğinden başlayacak.";
+    if (e && e.status >= 500) return "Sunucuya ulaşılamadı; biraz sonra tekrar deneyin.";
+    return m || "Bilinmeyen hata";
+  }
+
+  function stepsBar(step) {
+    const steps = ["Tarih seç", "Dosyaları seç", "Geri yükle"];
+    return `<ol class="steps">${steps.map((s, i) => `<li class="${i + 1 < step ? "done" : i + 1 === step ? "now" : ""}"><span class="n">${i + 1 < step ? "✓" : i + 1}</span>${s}</li>`).join("")}</ol>`;
+  }
+
+  function viewGeri() {
+    const R = S.r;
+    const head = `<h1>Dosyalarımı geri yükle</h1><p class="lede">Silinen ya da bozulan bir dosyayı eski bir yedekten geri alın. Geri yüklenenler ayrı bir “Geri Yüklenenler” klasörüne konur; mevcut dosyalarınızın üzerine asla yazılmaz.</p>`;
+    if (R.job) return `<div class="wrap">${head}${stepsBar(3)}${restoreJobCard(R.job)}</div>`;
+    if (R.step === 1) {
+      const snaps = S.snapshots;
+      return `<div class="wrap">${head}${stepsBar(1)}<h2>Hangi günkü hâline dönmek istiyorsunuz?</h2>
+        ${!snaps ? `<div class="skeleton" style="width:50%"></div>` : snaps.length ? `<div class="backups">${snaps.map((s, i) => `<button type="button" class="bk" data-snap="${i}"><div class="d">${esc(when(s.ended_at))}</div><div class="s num">${s.total_bytes ? esc(bytes(s.total_bytes)) + " · " + esc(count(s.total_files)) + " dosya" : "Yedek"}</div></button>`).join("")}</div>` : `<div class="banner info">${I.info}<div>Henüz geri yüklenebilecek bir yedek yok.</div></div>`}</div>`;
+    }
+    const snap = R.snap;
+    const parts = R.prefix.split("/").filter(Boolean);
+    let acc = "";
+    const crumbs = [`<button type="button" data-crumb="">${esc(when(snap.ended_at))} yedeği</button>`]
+      .concat(parts.map((p, i) => { acc += "/" + p; return `<span>›</span><button type="button" data-crumb="${esc(acc)}">${esc(label(p, i === 0 ? "" : "x"))}</button>`; })).join("");
+    const searching = R.query.trim().length >= 2;
+    const rows = searching ? R.results : R.entries;
+    let body;
+    if (R.error) body = `<div class="banner bad">${I.alert}<div>${esc(R.error)}</div></div>`;
+    else if (R.loading || !rows) body = `<div class="list"><div class="row"><div class="main"><div class="skeleton" style="width:40%"></div><div class="skeleton" style="width:25%"></div></div></div></div>`;
+    else if (!rows.length) body = `<div class="list"><div class="row"><div class="main"><div class="p">${searching ? "Bu adla bir dosya bu yedekte yok. Başka bir tarihi deneyin." : "Bu klasör boş."}</div></div></div></div>`;
+    else body = `<div class="list">${rows.map((e, i) => {
+      const dir = e.type === "dir";
+      const name = searching ? e.name : label(e.name, R.prefix);
+      const icon = dir ? (R.prefix === "" && e.name.length === 1 ? I.drive : I.folder) : I.file;
+      const mt = validDate(e.mtime);
+      return `<div class="row file-row"><input type="checkbox" id="pick-${i}" data-pick="${i}" ${R.picked.has(e.path) ? "checked" : ""} aria-label="${esc(name)} seç" /><div class="ic ${dir ? "dir" : "doc"}">${icon}</div><div class="main">${dir && !searching ? `<button type="button" class="open" data-open="${i}">${esc(name)}</button>` : `<div class="t">${esc(name)}</div>`}${searching ? `<div class="p">${esc(winPath(e.path))}</div>` : ""}</div><div class="meta num">${dir ? "Klasör" : `${esc(bytes(e.size))}${mt ? "<br>" + esc(mt.toLocaleString("tr-TR", { dateStyle: "short", timeStyle: "short" })) : ""}`}</div></div>`;
+    }).join("")}</div>${R.truncated && !searching ? `<p class="note">Bu klasörde çok fazla öğe var; ilk kısmı gösteriliyor. Aradığınızı bulmak için aramayı kullanın.</p>` : ""}`;
+    return `<div class="wrap">${head}${stepsBar(2)}
+      <div class="toolbar"><button type="button" class="btn ghost" id="back-1">‹ Başka tarih seç</button>
+        <label class="search" for="q">${I.search}<input id="q" type="search" autocomplete="off" placeholder="Bu yedekte dosya adı ara (ör. fatura)" value="${esc(R.query)}" /></label></div>
+      ${searching ? `<div class="crumbs"><span>“${esc(R.query)}” için ${rows ? rows.length : "…"} sonuç</span></div>` : `<div class="crumbs">${crumbs}</div>`}
+      ${body}
+      ${R.picked.size ? `<div class="dock"><div class="grow"><b class="num">${R.picked.size} öğe seçildi</b></div><button type="button" class="btn soft" id="clear">Temizle</button><button type="button" class="btn" id="do-restore">Geri yükle</button></div>` : ""}
+    </div>`;
+  }
+
+  function restoreJobCard(job) {
+    if (job.state === "running") {
+      const pct = Number(job.percent_done) || 0;
+      const rate = S.restoreRate.perSec();
+      const known = job.total_bytes > 0;
+      const left = rate > 0 && known ? "yaklaşık " + remaining((job.total_bytes - job.bytes_done) / rate) + " kaldı" : "süre hesaplanıyor";
+      return `<div class="card" aria-live="polite">
+        <div class="big num">${known ? "%" + Math.round(pct) : "Başlatılıyor…"}</div>
+        <div class="bar ${known ? "" : "indet"}" style="margin-top:12px"><i style="width:${known ? pct : 35}%"></i></div>
+        <div class="line num"><span>${known ? `${esc(bytes(job.bytes_done))} / ${esc(bytes(job.total_bytes))} · ${esc(count(job.files_done))} / ${esc(count(job.total_files))} dosya` : "Yedekten dosyalar isteniyor"}</span><span>${pct >= 100 ? "Dosyalar doğrulanıyor…" : esc(left)}</span></div>
+        <p class="note">Bu pencereyi kapatabilirsiniz; geri yükleme arka planda sürer. Yeniden açtığınızda buradan devam edersiniz.</p>
+        <button type="button" class="btn" id="cancel-restore">Durdur</button>
+      </div>`;
+    }
+    if (job.state === "done") {
+      if (S.r.delivering) return `<div class="card center-card"><div class="bar indet" style="max-width:320px;margin:0 auto 16px"><i></i></div><h2 style="font-size:18px;margin:0">Dosyalar Geri Yüklenenler klasörüne kopyalanıyor…</h2></div>`;
+      const where = job.delivered_to || job.staging || "";
+      const n = (job.selections || []).length;
+      const canOpen = native.has("stowlineOpenFolder");
+      const needsDeliver = !job.delivered_to && job.staging && native.has("stowlineDeliverRestore");
+      return `<div class="card center-card">
+        <div class="badge ok">${I.check}</div>
+        <h2 style="font-size:19px;margin:0">${n} öğe geri yüklendi</h2>
+        <p style="color:var(--ink-3);margin:4px 0 0">Dosyalar doğrulandı. Mevcut dosyalarınıza dokunulmadı.</p>
+        ${where ? `<div class="path">${esc(where)}</div>` : ""}
+        <div class="actions" style="justify-content:center">
+          ${needsDeliver ? `<button type="button" class="btn primary" id="deliver">${I.open}Klasöre koy ve aç</button>` : canOpen && where ? `<button type="button" class="btn primary" id="open-folder">${I.open}Klasörü aç</button>` : ""}
+          <button type="button" class="btn" id="restore-again">Başka dosya geri yükle</button>
+        </div>
+      </div>`;
+    }
+    const cancelled = job.state === "cancelled";
+    return `<div class="card center-card">
+      <div class="badge err">${cancelled ? I.x : I.alert}</div>
+      <h2 style="font-size:19px;margin:0">${cancelled ? "Geri yükleme durduruldu" : "Geri yükleme tamamlanamadı"}</h2>
+      <p style="color:var(--ink-3);margin:6px auto 16px;max-width:52ch">${cancelled ? "Yarım kalan dosyalar silindi. İstediğiniz zaman yeniden başlatabilirsiniz." : esc(friendlyRestoreError(job.error))}</p>
+      <div class="actions" style="justify-content:center"><button type="button" class="btn primary" id="restore-again">Yeniden dene</button>${cancelled ? "" : `<button type="button" class="btn" data-go="yardim">IT'ye haber ver</button>`}</div>
+    </div>`;
+  }
+
+  async function deliver(job) {
+    if (!native.has("stowlineDeliverRestore") || S.r.delivering) return;
+    S.r.delivering = true; render();
+    try {
+      const res = await native.deliver(job);
+      const dest = res && res.destination;
+      if (!dest) throw new Error((res && res.error) || "kopyalanamadı");
+      S.r.job = await api(`/api/restores/${encodeURIComponent(job.id)}/delivered`, { destination: dest });
+      S.r.delivering = false; render();
+      toast("Dosyalar Geri Yüklenenler klasörüne konuldu.");
+      if (native.has("stowlineOpenFolder")) native.openFolder(dest);
+    } catch (e) {
+      S.r.delivering = false; render();
+      toast("Dosyalar Geri Yüklenenler klasörüne kopyalanamadı: " + ((e && e.message) || e));
+    }
+  }
+
+  async function loadEntries() {
+    const R = S.r;
+    R.loading = true; R.error = ""; render();
+    try {
+      const b = await api(`/api/browse?snapshot=${encodeURIComponent(R.snap.snapshot_id)}&prefix=${encodeURIComponent(R.prefix)}`);
+      R.entries = b.entries || []; R.truncated = !!b.truncated;
+      R.entries.sort((a, c) => (a.type === "dir" ? 0 : 1) - (c.type === "dir" ? 0 : 1) || a.name.localeCompare(c.name, "tr"));
+    } catch (e) { R.error = "Yedeğin içeriği okunamadı. Bağlantıyı kontrol edip tekrar deneyin."; }
+    R.loading = false; render();
+  }
+
+  let searchTimer = 0;
+  function scheduleSearch() {
+    clearTimeout(searchTimer);
+    const R = S.r;
+    R.results = null; render();
+    if (R.query.trim().length < 2) return;
+    searchTimer = setTimeout(async () => {
+      const q = R.query.trim();
+      try {
+        const b = await api(`/api/search?snapshot=${encodeURIComponent(R.snap.snapshot_id)}&q=${encodeURIComponent(q)}`);
+        if (R.query.trim() === q) { R.results = b.results || []; render(); }
+      } catch (e) { R.error = "Arama yapılamadı."; render(); }
+    }, 400);
+  }
+
+  // ---------- Geçmiş ----------
+  function viewGecmis() {
+    const items = S.history;
+    if (!items) return `<div class="wrap"><h1>Geçmiş</h1><div class="skeleton" style="width:60%"></div></div>`;
+    return `<div class="wrap"><h1>Geçmiş</h1><p class="lede">Bu bilgisayarda yapılan son yedeklemeler ve geri yüklemeler.</p>
+      ${items.length ? `<ul class="tl">${items.map((h) => {
+        if (h.kind === "restore") {
+          const j = h.restore || {};
+          const ok = j.state === "done";
+          const what = ok ? `${(j.selections || []).length} öğe geri yüklendi` : j.state === "running" ? "Geri yükleme sürüyor" : j.state === "cancelled" ? "Geri yükleme durduruldu" : "Geri yükleme tamamlanamadı";
+          return `<li><div class="when num">${esc(when(j.ended_at || j.started_at))}</div><div class="mk"><i class="${ok || j.state === "running" ? "r" : "x"}"></i></div><div><div class="what">${esc(what)}</div><div class="why">${esc(j.delivered_to || (j.selections || []).map(winPath).join(", "))}</div></div></li>`;
+        }
+        const ok = h.outcome === "SUCCEEDED";
+        return `<li><div class="when num">${esc(when(h.ended_at || h.started_at))}</div><div class="mk"><i class="${ok ? "" : "x"}"></i></div><div><div class="what">${ok ? "Yedekleme tamamlandı" : "Yedekleme tamamlanamadı"}</div><div class="why num">${ok ? `${esc(bytes(h.data_added))} yeni veri · ${esc(duration(h.duration_ms))}` : "Bir sonraki denemede yeniden denenecek"}</div></div></li>`;
+      }).join("")}</ul>` : `<p class="lede">Henüz kayıt yok.</p>`}</div>`;
+  }
+
+  // ---------- Yardım ----------
+  function viewYardim() {
+    const c = (S.status && S.status.computer) || {};
+    return `<div class="wrap"><h1>Yardım</h1><p class="lede">Bir sorun mu var? Buradan yazdığınız mesaj doğrudan IT ekibinin yönetim paneline düşer.</p>
+      <div class="two">
+        <div class="panel"><h2>IT'ye haber ver</h2>
+          <label for="msg" style="display:block;font-size:13px;color:var(--ink-2);margin-bottom:6px">Ne oldu?</label>
+          <textarea id="msg" maxlength="2000" placeholder="Örn. Dün sildiğim Excel dosyasını bulamıyorum."></textarea>
+          <div style="margin-top:10px"><button type="button" class="btn primary" id="send">${I.mail}Gönder</button></div>
+        </div>
+        <div class="panel"><h2>Bu bilgisayar</h2>
+          <dl class="kv"><dt>Bilgisayar</dt><dd>${esc(c.hostname || "—")}</dd><dt>Program</dt><dd class="num">${esc(c.version || "—")}${c.agent_sha ? " · " + esc(c.agent_sha) : ""}</dd><dt>Yedek yeri</dt><dd>Şirketin yedekleme alanı (şifreli)</dd></dl>
+          <p class="note">Geri yüklenen dosyalar “Geri Yüklenenler” klasörüne konur.</p>
+        </div>
+      </div></div>`;
+  }
+
+  // ---------- render / polling ----------
+  const typingInSearch = () => document.activeElement && document.activeElement.id === "q";
+  const typingMessage = () => document.activeElement && document.activeElement.id === "msg";
+
+  function render() {
+    document.querySelectorAll("nav [data-view]").forEach((b) => {
+      if (b.dataset.view === S.view) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
+    });
+    const m = $("#main");
+    if (S.offline) {
+      m.innerHTML = `<div class="offline"><div class="badge err">${I.alert}</div><h1>Stowline yedekleme hizmetine ulaşılamıyor</h1><p class="lede" style="margin:8px auto 18px">Bilgisayar yeni açıldıysa bir dakika bekleyin. Sorun sürerse IT'ye haber verin.</p><button type="button" class="btn primary" id="retry">Tekrar dene</button></div>`;
+      return;
+    }
+    const focusQ = typingInSearch();
+    const msg = $("#msg") ? $("#msg").value : null;
+    const scroll = m.scrollTop;
+    m.innerHTML = ({ durum: viewDurum, klasorler: viewKlasorler, geri: viewGeri, gecmis: viewGecmis, yardim: viewYardim })[S.view]();
+    m.scrollTop = scroll;
+    if (msg !== null && $("#msg")) $("#msg").value = msg;
+    if (focusQ && $("#q")) { const q = $("#q"); q.focus(); q.setSelectionRange(q.value.length, q.value.length); }
+  }
+
+  async function refreshStatus() {
+    try {
+      const st = await api("/api/status");
+      S.offline = false;
+      if (st.backing_up) { S.backupRate.add(Number(st.bytes_done) || 0); S.queuedAt = 0; } else S.backupRate.reset();
+      const wasBacking = S.status && S.status.backing_up;
+      S.status = st;
+      if (wasBacking && !st.backing_up) { toast("Yedekleme bitti."); S.history = null; }
+      if (st.restore && (!S.r.job || S.r.job.id !== st.restore.id)) { S.r.job = st.restore; S.restoreRate.reset(); }
+    } catch (e) {
+      S.offline = true;
+    }
+  }
+
+  async function refreshRestore() {
+    const j = S.r.job;
+    if (!j || j.state !== "running") return;
+    try {
+      const next = await api(`/api/restores/${encodeURIComponent(j.id)}`);
+      S.restoreRate.add(Number(next.bytes_done) || 0);
+      S.r.job = next;
+      if (next.state === "done") { toast("Geri yükleme tamamlandı."); S.history = null; if (!next.delivered_to) deliver(next); }
+      else if (next.state !== "running") S.history = null;
+    } catch (e) {}
+  }
+
+  // A restore that finished while the window was closed is still waiting to
+  // be put into Documents: pick it up on start.
+  async function adoptUndelivered() {
+    if (!native.has("stowlineDeliverRestore") || S.r.job) return;
+    try {
+      const list = (await api("/api/restores")).restores || [];
+      const j = list.find((x) => x.state === "done" && x.staging && !x.delivered_to);
+      if (j) { S.r.job = j; S.view = "geri"; }
+    } catch (e) {}
+  }
+
+  async function loadView() {
+    try {
+      if (S.view === "klasorler") {
+        S.folders = await api("/api/folders");
+        if (!S.known.length && native.has("stowlineKnownFolders")) { try { S.known = (await native.knownFolders()) || []; } catch (e) {} }
+      }
+      if (S.view === "geri" && !S.snapshots) S.snapshots = (await api("/api/snapshots")).snapshots || [];
+      if (S.view === "gecmis") S.history = (await api("/api/history")).items || [];
+    } catch (e) {}
+    render();
+  }
+
+  let ticks = 0;
+  async function tick() {
+    ticks++;
+    const busy = (S.status && S.status.backing_up) || (S.r.job && S.r.job.state === "running") || S.queuedAt;
+    if (busy || ticks % 5 === 0 || S.offline) {
+      await refreshStatus();
+      await refreshRestore();
+      if (S.view === "klasorler" && S.folders && (S.folders.folders || []).some((f) => f.pending)) { try { S.folders = await api("/api/folders"); } catch (e) {} }
+      if (S.view === "gecmis" && !S.history) { try { S.history = (await api("/api/history")).items || []; } catch (e) {} }
+      if (!typingInSearch() && !typingMessage() && !$(".scrim")) render();
+    }
+    setTimeout(tick, 2000);
+  }
+
+  // ---------- events ----------
+  function go(view) { S.view = view; render(); loadView(); $("#main").focus(); }
+
+  document.addEventListener("click", async (e) => {
+    const t = e.target.closest("button");
+    if (!t || t.closest(".scrim")) return;
+    const R = S.r;
+    if (t.dataset.view) return go(t.dataset.view);
+    if (t.dataset.go) return go(t.dataset.go);
+    if (t.id === "retry") { await refreshStatus(); render(); return; }
+    if (t.id === "backup-now") {
+      t.disabled = true;
+      try { await api("/api/backup-now", {}); S.queuedAt = Date.now(); toast("Yedekleme istendi; birkaç saniye içinde başlayacak."); }
+      catch (err) { toast(friendly(err)); }
+      render(); return;
+    }
+    if (t.id === "add-folder") {
+      if (native.has("stowlinePickFolder")) { try { const p = await native.pickFolder(); if (p) await addFolder(p); } catch (err) { toast("Klasör seçilemedi."); } }
+      else { const p = await ask({ title: "Klasör ekle", text: "Yedeklenecek klasörün tam yolunu yazın.", ok: "Ekle", input: "C:\\Users\\Ad\\Belgeler" }); if (p) await addFolder(p); }
+      return;
+    }
+    if (t.dataset.suggest !== undefined) { const k = suggestions()[Number(t.dataset.suggest)]; if (k) await addFolder(k.path); return; }
+    if (t.dataset.remove !== undefined) {
+      const roots = S.folders.source_roots || [];
+      const target = roots[Number(t.dataset.remove)];
+      if (roots.length === 1) { toast("En az bir klasör yedeklenmeli; son klasör çıkarılamaz."); return; }
+      if (await ask({ title: "Klasör yedeklemeden çıkarılsın mı?", text: target + " — mevcut yedekler silinmez, yalnızca bundan sonra yedeklenmez.", ok: "Çıkar", danger: true })) {
+        if (await saveFolders(roots.filter((r) => r !== target))) toast("Klasör çıkarıldı. Eski yedekler duruyor.");
+      }
+      return;
+    }
+    if (t.dataset.snap !== undefined) {
+      R.snap = S.snapshots[Number(t.dataset.snap)]; R.step = 2; R.prefix = ""; R.picked.clear(); R.query = ""; R.results = null; R.entries = null;
+      return loadEntries();
+    }
+    if (t.id === "back-1") { R.step = 1; render(); return; }
+    if (t.dataset.open !== undefined) { R.prefix = R.entries[Number(t.dataset.open)].path; R.entries = null; return loadEntries(); }
+    if (t.dataset.crumb !== undefined) { R.prefix = t.dataset.crumb; R.query = ""; R.results = null; R.entries = null; return loadEntries(); }
+    if (t.id === "clear") { R.picked.clear(); render(); return; }
+    if (t.id === "do-restore") {
+      t.disabled = true;
+      try { R.job = await api("/api/restore", { snapshot_id: R.snap.snapshot_id, selections: [...R.picked.keys()] }); S.restoreRate.reset(); R.picked.clear(); }
+      catch (err) { toast(err.status === 409 ? "Zaten bir geri yükleme sürüyor." : "Geri yükleme başlatılamadı: " + friendly(err)); }
+      render(); return;
+    }
+    if (t.id === "cancel-restore") {
+      if (await ask({ title: "Geri yükleme durdurulsun mu?", text: "Yarım kalan dosyalar silinir. İstediğiniz zaman yeniden başlatabilirsiniz.", ok: "Durdur", danger: true })) {
+        try { await api(`/api/restores/${encodeURIComponent(R.job.id)}/cancel`, {}); } catch (err) {}
+      }
+      return;
+    }
+    if (t.id === "deliver") return deliver(R.job);
+    if (t.id === "open-folder") { native.openFolder(R.job.delivered_to || R.job.staging); return; }
+    if (t.id === "restore-again") { R.job = null; R.step = R.snap ? 2 : 1; S.snapshots = null; render(); loadView(); if (R.step === 2) loadEntries(); return; }
+    if (t.id === "send") {
+      const v = ($("#msg").value || "").trim();
+      if (!v) { toast("Önce ne olduğunu kısaca yazın."); return; }
+      t.disabled = true;
+      try { await api("/api/help", { message: v }); $("#msg").value = ""; toast("Mesajınız IT ekibine iletildi."); }
+      catch (err) { toast("Mesaj gönderilemedi: " + friendly(err)); }
+      t.disabled = false; return;
+    }
+  });
+  document.addEventListener("change", (e) => {
+    const p = e.target.closest("[data-pick]");
+    if (!p) return;
+    const R = S.r;
+    const rows = R.query.trim().length >= 2 ? R.results : R.entries;
+    const entry = rows && rows[Number(p.dataset.pick)];
+    if (!entry) return;
+    if (p.checked) R.picked.set(entry.path, entry); else R.picked.delete(entry.path);
+    render();
+  });
+  document.addEventListener("input", (e) => {
+    if (e.target.id === "q") { S.r.query = e.target.value; S.r.error = ""; scheduleSearch(); }
+  });
+
+  (async () => {
+    await refreshStatus();
+    await adoptUndelivered();
+    if (S.r.job) S.view = "geri";
+    render();
+    loadView();
+    setTimeout(tick, 2000);
+  })();
+})();
+</script>
+</body>
+</html>

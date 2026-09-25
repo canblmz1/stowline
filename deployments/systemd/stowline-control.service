@@ -1,0 +1,26 @@
+[Unit]
+Description=Stowline control plane (admin panel + agent API)
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=stowline
+Group=stowline
+# the app keeps a relative ./var (rate limits, caches): give it a writable cwd
+WorkingDirectory=/opt/stowline/var/control
+EnvironmentFile=/etc/stowline/control.env
+Environment=STOWLINE_RELEASE_DIR=/opt/stowline/app/current/release
+ExecStart=/opt/stowline/venv-control/bin/stowline-server
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/stowline/var
+MemoryMax=800M
+
+[Install]
+WantedBy=multi-user.target

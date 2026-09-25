@@ -1,0 +1,2 @@
+creating VSS snapshot for [c:\]
+failed to create snapshot for [c:\]: VSS_E_FLUSH_WRITES_TIMEOUT

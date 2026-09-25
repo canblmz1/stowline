@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://stowline.local/contracts/agent-enrollment.v1.json",
+  "title": "AgentEnrollmentResponse",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["schema_version", "device_id", "installation_id", "generation_id"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "device_id": { "type": "string", "format": "uuid" },
+    "installation_id": { "type": "string" },
+    "generation_id": { "type": "string" },
+    "control_credential": { "type": "string" },
+    "gateway_location": { "type": "string" },
+    "note": { "type": "string" }
+  }
+}

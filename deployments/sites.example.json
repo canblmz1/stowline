@@ -1,0 +1,26 @@
+{
+  "_comment": "Sites (locations with their own internet line) and departments. The server reads this file from STOWLINE_SITES_FILE; package-installer.py --sites ships the same file to the setup wizard. Site ids are lowercase and permanent. Times are local to the site's timezone. measured_upload_mbps / budget_percent are optional starting values (also editable in Settings); a site with no measurement admits no backups until one is entered.",
+  "sites": {
+    "hq": {
+      "display_name": "Headquarters",
+      "timezone": "Europe/Istanbul",
+      "eligibility_start": "08:30",
+      "preferred_latest_start": "16:30",
+      "window_end": "16:30",
+      "hard_stop": "21:00",
+      "max_concurrent_wan_backups": 3,
+      "measured_upload_mbps": 100,
+      "budget_percent": 40
+    },
+    "branch": {
+      "display_name": "Branch office",
+      "timezone": "Europe/Istanbul",
+      "eligibility_start": "08:30",
+      "preferred_latest_start": "16:30",
+      "window_end": "16:30",
+      "hard_stop": "21:00",
+      "max_concurrent_wan_backups": 2
+    }
+  },
+  "departments": ["IT", "Finance", "HR", "Sales", "Service", "Management", "Other"]
+}

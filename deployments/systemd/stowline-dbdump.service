@@ -1,0 +1,17 @@
+[Unit]
+Description=Stowline nightly control-plane database dump (local + Google Drive)
+After=postgresql.service
+
+[Service]
+Type=oneshot
+User=stowline
+Group=stowline
+EnvironmentFile=/etc/stowline/gateway.env
+EnvironmentFile=/etc/stowline/dbdump.env
+Environment=PATH=/opt/stowline/bin:/usr/bin:/bin
+ExecStart=/opt/stowline/app/current/deployments/systemd/dbdump.sh
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/stowline/var

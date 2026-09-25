@@ -1,0 +1,12 @@
+{
+  "version": "0.1.0",
+  "agent_sha256": "",
+  "agent_qualified": false,
+  "restic_version": "0.19.1",
+  "restic_sha256": "b0dd1fd21eea5d8fe1325f55f7118213c21f36de8a261e04c0624a5ab9fd7830",
+  "rclone_version": "1.75.0",
+  "rclone_sha256": "8be30f02266a6eaad9d481941ef287b9744bb7140034b097ad862a2ccff3e24c",
+  "workspace_repo_init_sha256": "",
+  "minimum_schema_version": 1,
+  "notes": "Release identity for the control plane. agent_sha256 + agent_qualified drive automatic agent upgrades: copy a tested stowline-agent.exe to release/bin/ and run python scripts/pin-release.py --qualify. restic/rclone pins are the upstream builds the installer ships."
+}

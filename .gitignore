@@ -1,0 +1,33 @@
+# build outputs (scripts/build-release.ps1, scripts/package-installer.py)
+releases/
+release/bin/
+agent/cmd/stowline-setup/payload.zip
+*.exe
+!agent/cmd/**/testdata/**/*.exe
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+.pytest_cache/
+server/var/
+var/
+
+# Node (admin panel CSS build)
+node_modules/
+
+# secrets and local configuration: never commit
+.env
+.env.*
+!.env.example
+!.env.prod.example
+rclone.conf
+*.secrets/
+deployments/compose/sites.json
+
+# editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,22 @@
+FROM python:3.12-slim
+WORKDIR /app
+COPY gateway /app
+RUN pip install --no-cache-dir -e .
+
+# Pinned rclone 1.75.0 linux-amd64. Zip digest from https://downloads.rclone.org/v1.75.0/SHA256SUMS
+ARG RCLONE_VERSION=1.75.0
+ARG RCLONE_ZIP_SHA256=aa2804e08f48250e71009c727124b6341cd0288465804a9a09d14663cabafbaa
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl unzip \
+    && curl -fsSL "https://downloads.rclone.org/v${RCLONE_VERSION}/rclone-v${RCLONE_VERSION}-linux-amd64.zip" -o /tmp/rclone.zip \
+    && echo "${RCLONE_ZIP_SHA256}  /tmp/rclone.zip" | sha256sum -c - \
+    && unzip -q /tmp/rclone.zip -d /tmp \
+    && mv /tmp/rclone-v${RCLONE_VERSION}-linux-amd64/rclone /usr/local/bin/rclone \
+    && chmod 0755 /usr/local/bin/rclone \
+    && rm -rf /tmp/rclone.zip /tmp/rclone-v${RCLONE_VERSION}-linux-amd64 \
+    && apt-get purge -y curl unzip \
+    && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
+
+EXPOSE 8081
+CMD ["python", "-c", "from gw import run; run()"]

@@ -1,0 +1,2 @@
+creating VSS snapshot for [c:\]
+successfully created snapshot for [c:\]

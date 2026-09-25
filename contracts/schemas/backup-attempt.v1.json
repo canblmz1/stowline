@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "BackupAttemptIngest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["outcome"],
+  "properties": {
+    "schema_version": { "type": "integer" },
+    "job_id": { "type": "string" },
+    "attempt_id": { "type": "string" },
+    "attempt_no": { "type": "integer" },
+    "slot_key": { "type": "string" },
+    "outcome": { "enum": ["SUCCEEDED", "PARTIAL", "FAILED", "CANCELLED"] },
+    "phase": { "type": "string" },
+    "snapshot_id": { "type": "string" },
+    "error_class": { "type": "string" },
+    "consistency": { "type": "string" },
+    "published_not_green": { "type": "boolean" },
+    "bytes_added": { "type": ["integer", "null"] },
+    "files_new": { "type": ["integer", "null"] },
+    "duration_ms": { "type": ["integer", "null"] }
+  }
+}

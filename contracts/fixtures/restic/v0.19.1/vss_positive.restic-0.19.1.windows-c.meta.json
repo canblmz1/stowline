@@ -1,0 +1,12 @@
+{
+  "restic_version": "0.19.1",
+  "os": "windows",
+  "volume": "C:",
+  "source": "Elevated human observation, 9 September 2026, same machine as prove p0c.",
+  "command": "restic backup C:\\Stowline\\TestCorpus --use-fs-snapshot --verbose=2",
+  "notes": [
+    "These two lines are the real Restic 0.19.1 VSS evidence. Unrelated file lists from --verbose=2 were omitted.",
+    "Restic 0.19.1 emits them via printer.P (stdout) only when --json is not set. Default verbosity (>=1) is sufficient; --verbose=2 is not required for these lines.",
+    "Pinned binary: C:\\Stowline\\bin\\restic.exe 0.19.1 windows/amd64."
+  ]
+}

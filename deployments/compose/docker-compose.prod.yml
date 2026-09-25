@@ -1,0 +1,114 @@
+# Production: HTTPS via Caddy (automatic Let's Encrypt), PostgreSQL, the
+# control plane, its worker and the storage gateway. Only Caddy publishes
+# ports; everything else is reachable on the internal network only.
+#
+#   cp .env.prod.example .env      # then fill in every value
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# Uses the published images (ghcr.io/$STOWLINE_IMAGE_OWNER/stowline-*); add
+# --build to build them from this source tree instead.
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: stowline
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: stowline
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stowline -d stowline"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  gateway:
+    image: ghcr.io/${STOWLINE_IMAGE_OWNER:-canblmz1}/stowline-gateway:${STOWLINE_VERSION:-latest}
+    build:
+      context: ../..
+      dockerfile: deployments/compose/Dockerfile.gateway
+    restart: unless-stopped
+    environment:
+      STOWLINE_GATEWAY_ROOT: ${STOWLINE_GATEWAY_ROOT:?set STOWLINE_GATEWAY_ROOT in .env}
+      STOWLINE_GATEWAY_REGISTRY: /data/registry.json
+      STOWLINE_GATEWAY_ADMIN_TOKEN: ${STOWLINE_GATEWAY_ADMIN_TOKEN:?set STOWLINE_GATEWAY_ADMIN_TOKEN in .env}
+      STOWLINE_GATEWAY_PORT: "8081"
+      RCLONE_CONFIG: /data/rclone.conf
+      RCLONE_CONFIG_PASS: ${RCLONE_CONFIG_PASS:-}
+    volumes:
+      - gwdata:/data
+      # your rclone.conf (e.g. `rclone config` for Google Drive, S3, B2...)
+      - ${RCLONE_CONF_FILE:-./rclone.conf}:/data/rclone.conf
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  server:
+    image: ghcr.io/${STOWLINE_IMAGE_OWNER:-canblmz1}/stowline-server:${STOWLINE_VERSION:-latest}
+    build:
+      context: ../..
+      dockerfile: deployments/compose/Dockerfile.server
+    restart: unless-stopped
+    environment: &server_env
+      STOWLINE_PRODUCTION: "1"
+      STOWLINE_LAB_MODE: "false"
+      STOWLINE_ALLOW_INSECURE_HTTP: "false"
+      STOWLINE_DATABASE_URL: postgresql+psycopg://stowline:${POSTGRES_PASSWORD}@postgres:5432/stowline
+      STOWLINE_SECRET_KEY: ${STOWLINE_SECRET_KEY:?set STOWLINE_SECRET_KEY in .env}
+      STOWLINE_ADMIN_USERNAME: ${STOWLINE_ADMIN_USERNAME:-admin}
+      STOWLINE_ADMIN_PASSWORD: ${STOWLINE_ADMIN_PASSWORD:?set STOWLINE_ADMIN_PASSWORD in .env}
+      STOWLINE_ESCROW_KEY: ${STOWLINE_ESCROW_KEY:-}
+      STOWLINE_ORG_NAME: ${STOWLINE_ORG_NAME:-My Organization}
+      STOWLINE_SITES_FILE: /config/sites.json
+      STOWLINE_GATEWAY_ADMIN_URL: http://gateway:8081
+      STOWLINE_GATEWAY_ADMIN_TOKEN: ${STOWLINE_GATEWAY_ADMIN_TOKEN}
+      STOWLINE_GATEWAY_PUBLIC_BASE: rest:https://${STOWLINE_DOMAIN:?set STOWLINE_DOMAIN in .env}
+    volumes:
+      - ${SITES_FILE:-../sites.example.json}:/config/sites.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      gateway:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  worker:
+    image: ghcr.io/${STOWLINE_IMAGE_OWNER:-canblmz1}/stowline-server:${STOWLINE_VERSION:-latest}
+    build:
+      context: ../..
+      dockerfile: deployments/compose/Dockerfile.server
+    restart: unless-stopped
+    command: stowline-worker
+    environment: *server_env
+    volumes:
+      - ${SITES_FILE:-../sites.example.json}:/config/sites.json:ro
+    depends_on:
+      server:
+        condition: service_healthy
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      STOWLINE_DOMAIN: ${STOWLINE_DOMAIN}
+    volumes:
+      - ./Caddyfile.prod:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      server:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  gwdata:
+  caddydata:

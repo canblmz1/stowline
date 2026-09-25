@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="220" viewBox="0 0 960 220" role="img" aria-label="Stowline - centrally managed, encrypted backups for Windows PCs">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b1b3f"/>
+      <stop offset="1" stop-color="#12306e"/>
+    </linearGradient>
+    <linearGradient id="bar" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#3b82f6"/>
+      <stop offset="1" stop-color="#34d399"/>
+    </linearGradient>
+    <clipPath id="track"><rect x="244" y="150" width="480" height="10" rx="5"/></clipPath>
+    <style>
+      .t { font-family: "Segoe UI", system-ui, -apple-system, Helvetica, Arial, sans-serif; }
+      .fill { animation: fill 6s ease-in-out infinite; transform-origin: 244px 155px; }
+      @keyframes fill { 0% { transform: scaleX(0.02); } 70% { transform: scaleX(1); } 88% { transform: scaleX(1); opacity: 1; } 100% { transform: scaleX(1); opacity: 0; } }
+      .pulse { animation: pulse 2s ease-in-out infinite; transform-origin: 138px 104px; }
+      @keyframes pulse { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.06); opacity: .9; } }
+      .done { animation: done 6s ease-in-out infinite; opacity: 0; }
+      @keyframes done { 0%, 68% { opacity: 0; } 74%, 90% { opacity: 1; } 100% { opacity: 0; } }
+      .busy { animation: busy 6s ease-in-out infinite; }
+      @keyframes busy { 0%, 68% { opacity: 1; } 74%, 90% { opacity: 0; } 100% { opacity: 1; } }
+      .dot { animation: blink 1.2s ease-in-out infinite; }
+      .dot:nth-of-type(2) { animation-delay: .2s; } .dot:nth-of-type(3) { animation-delay: .4s; }
+      @keyframes blink { 0%, 100% { opacity: .25; } 50% { opacity: 1; } }
+    </style>
+  </defs>
+  <rect width="960" height="220" rx="16" fill="url(#bg)"/>
+  <g class="pulse">
+    <path d="M138 52l44 18v30c0 27-18 49-44 60-26-11-44-33-44-60V70z" fill="#1d4ed8" stroke="#93c5fd" stroke-width="3"/>
+    <path d="M119 104l13 13 26-27" fill="none" stroke="#fff" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <text x="244" y="92" class="t" font-size="52" font-weight="700" fill="#fff">Stowline</text>
+  <text x="246" y="128" class="t" font-size="19" fill="#bfd0f5">Centrally managed, encrypted backups for the Windows PCs of your organisation</text>
+  <rect x="244" y="150" width="480" height="10" rx="5" fill="#ffffff" fill-opacity=".14"/>
+  <g clip-path="url(#track)"><rect class="fill" x="244" y="150" width="480" height="10" fill="url(#bar)"/></g>
+  <text x="740" y="160" class="t busy" font-size="14" fill="#bfd0f5">backing up<tspan class="dot">.</tspan><tspan class="dot">.</tspan><tspan class="dot">.</tspan></text>
+  <text x="740" y="160" class="t done" font-size="14" font-weight="600" fill="#34d399">✓ protected</text>
+  <text x="246" y="192" class="t" font-size="14" fill="#7f95c6">restic · VSS · any rclone storage · self-hosted · English / Türkçe</text>
+</svg>

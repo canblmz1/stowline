@@ -1,0 +1,3 @@
+creating VSS snapshot for [c:\]
+successfully created snapshot for [c:\]
+mountpoints in snapshot volume [c:\]:

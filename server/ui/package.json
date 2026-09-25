@@ -1,0 +1,14 @@
+{
+  "name": "stowline-control-ui",
+  "private": true,
+  "description": "Builds server/app/static/app.css from the Tailwind classes used in index.html and app.js. The compiled file is committed, so deploying needs no Node.",
+  "scripts": {
+    "build": "tailwindcss -c tailwind.config.js -i input.css -o ../app/static/app.css --minify",
+    "watch": "tailwindcss -c tailwind.config.js -i input.css -o ../app/static/app.css --watch"
+  },
+  "devDependencies": {
+    "@tailwindcss/container-queries": "^0.1.1",
+    "@tailwindcss/forms": "^0.5.9",
+    "tailwindcss": "^3.4.17"
+  }
+}

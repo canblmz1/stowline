@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://stowline.local/contracts/command-envelope.v1.json",
+  "title": "CommandEnvelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "command_id", "device_id", "installation_id", "kind", "payload", "issued_at", "expires_at", "payload_hash"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "command_id": { "type": "string", "format": "uuid" },
+    "job_id": { "type": "string", "format": "uuid" },
+    "device_id": { "type": "string", "format": "uuid" },
+    "installation_id": { "type": "string", "format": "uuid" },
+    "generation_id": { "type": "string" },
+    "kind": {
+      "type": "string",
+      "enum": ["RUN_BACKUP", "RESTORE_TO_STAGING", "RUN_CANARY", "REFRESH_POLICY", "REPORT_INVENTORY", "CANCEL_CURRENT_SAFE_OPERATION", "BROWSE_SNAPSHOT"]
+    },
+    "payload": { "type": "object" },
+    "payload_hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "policy_revision_id": { "type": "string" },
+    "issued_at": { "type": "string", "format": "date-time" },
+    "not_before": { "type": "string", "format": "date-time" },
+    "expires_at": { "type": "string", "format": "date-time" }
+  }
+}
