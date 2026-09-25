@@ -188,7 +188,7 @@
     const trNote = (t) => { const m = TR_NOTES.find(([re]) => re.test(String(t || ""))); return m ? m[1] : t; };
     const catLabel = (c) => CAT_LABEL[c.category] || (String(c.category || "").startsWith("known_folder") ? String(c.path || "").split("\\").pop() : c.category);
 
-    const state = { screen: 1, identity: null, catalog: null, discovery: null, selected: {}, confirmed: {}, org: { department: "", username: "admin", password: "", preferred: "12:00" }, manifest: null, estimate: null, preflight: null, busy: "", error: "", result: null };
+    const state = { screen: 1, identity: null, catalog: null, discovery: null, selected: {}, confirmed: {}, org: { department: "", auth: "code", setup_code: "", username: "admin", password: "", preferred: "12:00" }, manifest: null, estimate: null, preflight: null, busy: "", error: "", result: null };
 
     function renderSteps() {
       $("#steps").innerHTML = STEPS.map((s, i) => `<div class="step ${i + 1 < state.screen ? "done" : i + 1 === state.screen ? "now" : ""}"><span class="n">${i + 1 < state.screen ? ICON.ok : i + 1}</span>${esc(s)}</div>`).join("");
@@ -250,12 +250,19 @@
         <h2>Departman</h2>
         <div class="chips">${deps.map((d) => `<button type="button" class="chip" data-dept="${esc(d)}" aria-pressed="${o.department === d || (d === "Other" && custom)}">${esc(DEPT_LABEL[d] || d)}</button>`).join("")}</div>
         ${custom ? `<label class="f" for="customDept">Departman adı</label><input class="field" id="customDept" maxlength="64" placeholder="Örn. Yedek Parça" value="${esc(o.department === "Other" ? "" : o.department)}" />` : ""}
-        <h2>Yönetici onayı</h2>
+        <h2>Kurulum onayı</h2>
+        <div class="chips" style="margin-bottom:10px">
+          <button type="button" class="chip" data-auth="code" aria-pressed="${o.auth === "code"}">Kurulum kodu</button>
+          <button type="button" class="chip" data-auth="admin" aria-pressed="${o.auth === "admin"}">Yönetici hesabı</button>
+        </div>
+        ${o.auth === "code" ? `
+        <p class="lede" style="margin-bottom:6px">Yönetim panelinde <b>Ayarlar → Kurulum kodları</b> bölümünden alınan kodu yazın. Kod yalnızca bilgisayar kaydetmeye yarar; yönetici şifresi bu bilgisayara hiç yazılmaz.</p>
+        <label class="f" for="setupCode">Kurulum kodu</label><input class="field" id="setupCode" autocomplete="off" spellcheck="false" placeholder="XXXXX-XXXXX-XXXXX-XXXXX" value="${esc(o.setup_code)}" />` : `
         <p class="lede" style="margin-bottom:6px">Bilgisayarı sisteme kaydetmek için Stowline yönetim paneli hesabınızla onaylayın. Şifre yalnızca bu kayıt için kullanılır, saklanmaz.</p>
         <div class="grid2">
           <div><label class="f" for="user">Kullanıcı adı</label><input class="field" id="user" autocomplete="username" value="${esc(o.username)}" /></div>
           <div><label class="f" for="pass">Şifre</label><input class="field" id="pass" type="password" autocomplete="current-password" value="${esc(o.password)}" /></div>
-        </div>
+        </div>`}
         ${needsUrl ? `<label class="f" for="url">Yönetim paneli adresi</label><input class="field" id="url" placeholder="https://…" value="${esc(o.control_plane_url || "")}" />` : ""}
       </div>`;
     }
@@ -346,6 +353,7 @@
 
     function readOrg() {
       const o = state.org;
+      if ($("#setupCode")) o.setup_code = $("#setupCode").value.trim();
       if ($("#user")) o.username = $("#user").value.trim();
       if ($("#pass")) o.password = $("#pass").value;
       if ($("#url")) o.control_plane_url = $("#url").value.trim();
@@ -394,7 +402,12 @@
         }
         if (!o.department) { alert("Departmanı seçin."); return; }
         const synthetic = !!(state.identity && state.identity.synthetic);
-        if (!synthetic && (!o.username || !o.password)) { alert("Yönetici kullanıcı adı ve şifresini girin."); return; }
+        if (!synthetic && o.auth === "code" && !o.setup_code) { alert("Kurulum kodunu yazın."); return; }
+        if (!synthetic && o.auth === "admin" && (!o.username || !o.password)) { alert("Yönetici kullanıcı adı ve şifresini girin."); return; }
+        if (!synthetic && o.auth === "code" && (state.identity || {}).control_plane_url) {
+          try { await api("/api/local/check-code", { method: "POST", body: JSON.stringify({ code: o.setup_code }) }); }
+          catch (err) { alert(String(err.message).includes("too many") ? "Çok fazla hatalı kod denendi. Birkaç dakika bekleyin." : "Kurulum kodu geçersiz ya da süresi dolmuş. Panelden yeni bir kod alın."); return; }
+        }
         if (!synthetic && !(state.identity && state.identity.control_plane_url) && !o.control_plane_url) { alert("Yönetim paneli adresini girin."); return; }
         state.screen = 3; render();
         if (!state.discovery) { state.discovery = await api("/api/local/discover", { method: "POST", body: "{}" }, 180000); render(); }
@@ -424,7 +437,7 @@
         try {
           state.result = await api("/api/local/install", { method: "POST", body: JSON.stringify({
             site_id: o.site_id, department: o.department, custom_department: "", control_plane_url: o.control_plane_url || (state.identity || {}).control_plane_url || "",
-            username: o.username, password: o.password, preferred_start_hhmm: o.preferred || "12:00", selected: selectedItemsFromManifest(), confirm_install: true,
+            setup_code: o.auth === "code" ? o.setup_code : "", username: o.auth === "admin" ? o.username : "", password: o.auth === "admin" ? o.password : "", preferred_start_hhmm: o.preferred || "12:00", selected: selectedItemsFromManifest(), confirm_install: true,
             display_name: o.display_name || "",
           }) }, 35 * 60 * 1000);
           o.password = "";
@@ -450,6 +463,7 @@
       if (t.id === "back") { readOrg(); state.screen = Math.max(1, state.screen - 1); render(); return; }
       if (t.dataset.site) { readOrg(); state.org.site_id = t.dataset.site; render(); return; }
       if (t.dataset.dept) { readOrg(); state.org.department = t.dataset.dept; render(); return; }
+      if (t.dataset.auth) { readOrg(); state.org.auth = t.dataset.auth; render(); return; }
       if (t.id === "browseFolder") { t.disabled = true; await pickFolder(); t.disabled = false; return; }
       if (t.id === "connect") {
         const input = $("#server");

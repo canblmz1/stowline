@@ -48,6 +48,9 @@ type restoreJob struct {
 	DeliveredTo string `json:"delivered_to,omitempty"`
 	Error       string `json:"error,omitempty"`
 	Reported    bool   `json:"reported,omitempty"`
+	// Owner is the SID of the Windows account that asked for it: only that
+	// account sees the job and gets read access to what was restored.
+	Owner string `json:"owner,omitempty"`
 
 	cancel context.CancelFunc
 }
@@ -61,9 +64,9 @@ type restoreJobs struct {
 
 	// Run performs the restore into staging and returns the staging path.
 	Run func(ctx context.Context, jobID, snapshot string, selections []string, progress func(domain.RestoreProgress)) (string, error)
-	// GrantRead lets ordinary users read what was restored (the staging
+	// GrantRead lets the job's owner read what was restored (the staging
 	// root is SYSTEM/Administrators only).
-	GrantRead func(dir string) error
+	GrantRead func(dir, owner string) error
 	// StagingRoot bounds what Delivered may delete.
 	StagingRoot string
 	// StatePath persists the job list across agent restarts; "" disables it.
@@ -137,6 +140,11 @@ func (r *restoreJobs) runningLocked() *restoreJob {
 
 // Start launches a restore in the background and returns immediately.
 func (r *restoreJobs) Start(snapshotID string, selections []string) (restoreJob, error) {
+	return r.StartAs("", snapshotID, selections)
+}
+
+// StartAs is Start for a restore that belongs to one Windows account.
+func (r *restoreJobs) StartAs(owner, snapshotID string, selections []string) (restoreJob, error) {
 	r.mu.Lock()
 	if r.runningLocked() != nil {
 		r.mu.Unlock()
@@ -149,6 +157,7 @@ func (r *restoreJobs) Start(snapshotID string, selections []string) (restoreJob,
 		Selections: append([]string(nil), selections...),
 		State:      restoreRunning,
 		StartedAt:  r.clock(),
+		Owner:      owner,
 		cancel:     cancel,
 	}
 	r.jobs = append([]*restoreJob{job}, r.jobs...)
@@ -171,7 +180,7 @@ func (r *restoreJobs) run(ctx context.Context, job *restoreJob) {
 	}
 	staging, err := r.Run(ctx, job.ID, job.SnapshotID, job.Selections, progress)
 	if err == nil && staging != "" && r.GrantRead != nil {
-		if gerr := r.GrantRead(staging); gerr != nil {
+		if gerr := r.GrantRead(staging, job.Owner); gerr != nil {
 			err = gerr
 		}
 	}
@@ -271,6 +280,17 @@ func (r *restoreJobs) List() []restoreJob {
 	out := make([]restoreJob, 0, len(r.jobs))
 	for _, j := range r.jobs {
 		out = append(out, *j)
+	}
+	return out
+}
+
+// ListFor is List limited to one account's own restores.
+func (r *restoreJobs) ListFor(owner string) []restoreJob {
+	out := []restoreJob{}
+	for _, j := range r.List() {
+		if j.Owner == owner {
+			out = append(out, j)
+		}
 	}
 	return out
 }

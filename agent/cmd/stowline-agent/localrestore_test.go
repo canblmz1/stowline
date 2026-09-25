@@ -38,7 +38,7 @@ func TestRestoreJobRunsInTheBackgroundAndReportsProgressThenDone(t *testing.T) {
 			dir := filepath.Join(root, jobID)
 			return dir, os.MkdirAll(dir, 0o700)
 		},
-		GrantRead: func(dir string) error { granted = dir; return nil },
+		GrantRead: func(dir, owner string) error { granted = dir; return nil },
 	}
 	job, err := r.Start("a", []string{"/C/x"})
 	if err != nil {

@@ -50,7 +50,7 @@ func startLocalUIServer(progress *liveBackupProgress, eng *restic.Adapter, svcAp
 	hostname, _ := os.Hostname()
 	jobs := &restoreJobs{
 		Run:         restore,
-		GrantRead:   grantUsersRead,
+		GrantRead:   grantReadTo,
 		StagingRoot: cfg.StagingRoot,
 		StatePath:   filepath.Join(cfg.PilotRoot, "state", "local-restores.json"),
 		ReportDelay: 10 * time.Minute,
@@ -81,6 +81,7 @@ func startLocalUIServer(progress *liveBackupProgress, eng *restic.Adapter, svcAp
 			return err
 		},
 		Restores: jobs,
+		Caller:   resolveLocalCaller,
 		Sizes:    &folderSizes{Budget: time.Minute, MaxAge: 10 * time.Minute},
 		Computer: map[string]string{"hostname": hostname, "version": buildinfo.Version},
 	}
@@ -127,6 +128,9 @@ type localUIServer struct {
 	ApplyFolders func(ctx context.Context, sourceRoots []string) error
 	// Restores runs self-service restores in the background.
 	Restores *restoreJobs
+	// Caller tells which Windows account sent a request (localcaller.go);
+	// nil or a failure means the request is refused.
+	Caller callerResolver
 	// Sizes caches per-folder totals for "Klasörlerim".
 	Sizes *folderSizes
 	// ReportSelfServiceSelection is best-effort: pilot.json is already
@@ -171,20 +175,20 @@ func (s *localUIServer) Handler() http.Handler {
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 		_, _ = w.Write(localUIScript)
 	})
-	mux.HandleFunc("GET /api/status", s.handleStatus)
-	mux.HandleFunc("GET /api/folders", s.handleGetFolders)
-	mux.HandleFunc("POST /api/folders", s.handlePostFolders)
-	mux.HandleFunc("GET /api/snapshots", s.handleSnapshots)
-	mux.HandleFunc("GET /api/browse", s.handleBrowse)
-	mux.HandleFunc("GET /api/search", s.handleSearch)
-	mux.HandleFunc("POST /api/restore", s.handleRestore)
-	mux.HandleFunc("GET /api/restores", s.handleListRestores)
-	mux.HandleFunc("GET /api/restores/{id}", s.handleGetRestore)
-	mux.HandleFunc("POST /api/restores/{id}/cancel", s.handleCancelRestore)
-	mux.HandleFunc("POST /api/restores/{id}/delivered", s.handleDeliveredRestore)
-	mux.HandleFunc("POST /api/backup-now", s.handleBackupNow)
-	mux.HandleFunc("POST /api/help", s.handleHelp)
-	mux.HandleFunc("GET /api/history", s.handleHistory)
+	mux.HandleFunc("GET /api/status", s.withCaller(s.handleStatus))
+	mux.HandleFunc("GET /api/folders", s.withCaller(s.handleGetFolders))
+	mux.HandleFunc("POST /api/folders", s.withCaller(s.handlePostFolders))
+	mux.HandleFunc("GET /api/snapshots", s.withCaller(s.handleSnapshots))
+	mux.HandleFunc("GET /api/browse", s.withCaller(s.handleBrowse))
+	mux.HandleFunc("GET /api/search", s.withCaller(s.handleSearch))
+	mux.HandleFunc("POST /api/restore", s.withCaller(s.handleRestore))
+	mux.HandleFunc("GET /api/restores", s.withCaller(s.handleListRestores))
+	mux.HandleFunc("GET /api/restores/{id}", s.withCaller(s.handleGetRestore))
+	mux.HandleFunc("POST /api/restores/{id}/cancel", s.withCaller(s.handleCancelRestore))
+	mux.HandleFunc("POST /api/restores/{id}/delivered", s.withCaller(s.handleDeliveredRestore))
+	mux.HandleFunc("POST /api/backup-now", s.withCaller(s.handleBackupNow))
+	mux.HandleFunc("POST /api/help", s.withCaller(s.handleHelp))
+	mux.HandleFunc("GET /api/history", s.withCaller(s.handleHistory))
 	return localOnly(mux)
 }
 
@@ -328,7 +332,7 @@ func (s *localUIServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if s.Restores != nil {
-		if cur, ok := s.Restores.Current(); ok {
+		if cur, ok := s.Restores.Current(); ok && cur.Owner == callerSID(r) {
 			body["restore"] = cur
 		}
 	}
@@ -358,7 +362,14 @@ func (s *localUIServer) handleGetFolders(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, s.foldersBody(roots))
+	c, _ := callerFrom(r.Context())
+	visible := []string{}
+	for _, root := range roots {
+		if !c.hidden(root) {
+			visible = append(visible, root)
+		}
+	}
+	writeJSON(w, http.StatusOK, s.foldersBody(visible))
 }
 
 type foldersRequest struct {
@@ -393,12 +404,31 @@ func (s *localUIServer) handlePostFolders(w http.ResponseWriter, r *http.Request
 		})
 		return
 	}
-	if err := s.ApplyFolders(r.Context(), body.SourceRoots); err != nil {
+	// The page only shows (and so only sends) this person's folders; other
+	// accounts' folders stay in the backup exactly as they were.
+	c, _ := callerFrom(r.Context())
+	var others []string
+	if s.CurrentFolders != nil {
+		if current, err := s.CurrentFolders(); err == nil {
+			for _, root := range current {
+				if c.hidden(root) {
+					others = append(others, root)
+				}
+			}
+		}
+	}
+	for _, root := range body.SourceRoots {
+		if c.hidden(root) {
+			writeError(w, http.StatusForbidden, "not_your_folder")
+			return
+		}
+	}
+	roots := append(append([]string(nil), body.SourceRoots...), others...)
+	if err := s.ApplyFolders(r.Context(), roots); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
 	if s.ReportSelfServiceSelection != nil {
-		roots := append([]string(nil), body.SourceRoots...)
 		go func() { _ = s.ReportSelfServiceSelection(context.Background(), roots) }()
 	}
 	writeJSON(w, http.StatusOK, s.foldersBody(body.SourceRoots))
@@ -441,12 +471,23 @@ func (s *localUIServer) handleBrowse(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "snapshot is required")
 		return
 	}
+	c, _ := callerFrom(r.Context())
+	if prefix != "" && c.hidden(prefix) {
+		writeError(w, http.StatusForbidden, "not_your_folder")
+		return
+	}
 	entries, truncated, err := s.ListSnapshot(r.Context(), snapshotID, prefix)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"entries": entries, "prefix": prefix, "truncated": truncated})
+	visible := make([]ports.SnapshotEntry, 0, len(entries))
+	for _, e := range entries {
+		if !c.hidden(e.Path) {
+			visible = append(visible, e)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"entries": visible, "prefix": prefix, "truncated": truncated})
 }
 
 const maxSearchResults = 200
@@ -475,10 +516,11 @@ func (s *localUIServer) handleSearch(w http.ResponseWriter, r *http.Request) {
 		}
 		s.searchSnap, s.searchCache = snapshotID, all
 	}
+	c, _ := callerFrom(r.Context())
 	results := []ports.SnapshotEntry{}
 	truncated := false
 	for _, e := range s.searchCache {
-		if e.Type == "dir" || !strings.Contains(strings.ToLower(e.Name), q) {
+		if e.Type == "dir" || !strings.Contains(strings.ToLower(e.Name), q) || c.hidden(e.Path) {
 			continue
 		}
 		if len(results) == maxSearchResults {
@@ -509,7 +551,14 @@ func (s *localUIServer) handleRestore(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "snapshot_id and at least one selection are required")
 		return
 	}
-	job, err := s.Restores.Start(body.SnapshotID, body.Selections)
+	c, _ := callerFrom(r.Context())
+	for _, sel := range body.Selections {
+		if !c.mayRestore(sel) {
+			writeError(w, http.StatusForbidden, "not_your_folder")
+			return
+		}
+	}
+	job, err := s.Restores.StartAs(c.SID, body.SnapshotID, body.Selections)
 	if errors.Is(err, errRestoreBusy) {
 		writeError(w, http.StatusConflict, "restore_busy")
 		return
@@ -526,7 +575,7 @@ func (s *localUIServer) handleListRestores(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusOK, map[string]any{"restores": []restoreJob{}})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"restores": s.Restores.List()})
+	writeJSON(w, http.StatusOK, map[string]any{"restores": s.Restores.ListFor(callerSID(r))})
 }
 
 func (s *localUIServer) handleGetRestore(w http.ResponseWriter, r *http.Request) {
@@ -535,7 +584,7 @@ func (s *localUIServer) handleGetRestore(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	job, ok := s.Restores.Get(r.PathValue("id"))
-	if !ok {
+	if !ok || job.Owner != callerSID(r) {
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
@@ -543,7 +592,11 @@ func (s *localUIServer) handleGetRestore(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *localUIServer) handleCancelRestore(w http.ResponseWriter, r *http.Request) {
-	if s.Restores == nil || !s.Restores.Cancel(r.PathValue("id")) {
+	if s.Restores == nil {
+		writeError(w, http.StatusConflict, "not running")
+		return
+	}
+	if job, ok := s.Restores.Get(r.PathValue("id")); !ok || job.Owner != callerSID(r) || !s.Restores.Cancel(job.ID) {
 		writeError(w, http.StatusConflict, "not running")
 		return
 	}
@@ -556,6 +609,10 @@ type deliveredRequest struct {
 
 func (s *localUIServer) handleDeliveredRestore(w http.ResponseWriter, r *http.Request) {
 	if s.Restores == nil {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	if job, ok := s.Restores.Get(r.PathValue("id")); !ok || job.Owner != callerSID(r) {
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
@@ -642,7 +699,7 @@ func (s *localUIServer) handleHistory(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if s.Restores != nil {
-		for _, j := range s.Restores.List() {
+		for _, j := range s.Restores.ListFor(callerSID(r)) {
 			at := j.EndedAt
 			if at.IsZero() {
 				at = j.StartedAt

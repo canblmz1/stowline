@@ -47,6 +47,7 @@ LOCAL_ROUTES = [
     ("POST", "/api/local/estimate", {"site_id": "hq", "preferred_start_hhmm": "12:00", "logical_bytes": 0}),
     ("POST", "/api/local/install", VALID_INSTALL_BODY),
     ("POST", "/api/local/start-first-backup", VALID_START_BACKUP_BODY),
+    ("POST", "/api/local/check-code", {"code": "AAAAA-BBBBB-CCCCC-DDDDD"}),
 ]
 
 
@@ -936,3 +937,66 @@ def test_a_pinned_package_refuses_a_typed_server(monkeypatch):
     with TestClient(w.app) as c:
         r = c.post("/api/local/server", json={"url": "https://elsewhere.example.org"}, headers={"X-Wizard-Token": "tok"})
     assert r.status_code == 409
+
+
+def _record_control_plane_posts(monkeypatch):
+    import httpx
+
+    real_post = httpx.Client.post
+    seen = []
+
+    def spy(self, url, *args, **kwargs):
+        if "cp.example.test" in str(url):
+            seen.append((str(url), kwargs.get("json")))
+        return real_post(self, url, *args, **kwargs)
+
+    monkeypatch.setattr(httpx.Client, "post", spy)
+    return seen
+
+
+def test_install_with_a_setup_code_never_sends_the_admin_password(monkeypatch, tmp_path):
+    body = _install_fixture(monkeypatch, tmp_path)
+    _mock_successful_control_plane(monkeypatch)
+    seen = _record_control_plane_posts(monkeypatch)
+    _mock_subprocess(monkeypatch)
+    body.update({"setup_code": "ABCDE-FGHJK-MNPQR-STUVW", "username": "", "password": ""})
+    with TestClient(w.app) as c:
+        r = c.post("/api/local/install", json=body, headers={"X-Wizard-Token": "tok"})
+    assert r.status_code == 200, r.text
+    urls = [u for u, _ in seen]
+    assert any(u.endswith("/api/v1/setup/login") for u in urls)
+    assert not any(u.endswith("/api/v1/auth/login") for u in urls)
+    login = next(j for u, j in seen if u.endswith("/api/v1/setup/login"))
+    assert login == {"code": "ABCDE-FGHJK-MNPQR-STUVW"}
+
+
+def test_install_without_code_or_login_is_refused(monkeypatch, tmp_path):
+    body = _install_fixture(monkeypatch, tmp_path)
+    _mock_successful_control_plane(monkeypatch)
+    _mock_subprocess(monkeypatch)
+    body.update({"setup_code": "", "username": "", "password": ""})
+    with TestClient(w.app) as c:
+        r = c.post("/api/local/install", json=body, headers={"X-Wizard-Token": "tok"})
+    assert r.status_code == 422
+
+
+def test_check_code_asks_the_connected_server(monkeypatch):
+    import httpx
+
+    monkeypatch.setitem(w.STATE, "token", "tok")
+    monkeypatch.setitem(w.STATE, "deploy", {"control_plane_url": "https://cp.example.test"})
+    real_post = httpx.Client.post
+
+    def fake_post(self, url, *args, **kwargs):
+        u = str(url)
+        if "cp.example.test" not in u:
+            return real_post(self, url, *args, **kwargs)
+        ok = kwargs.get("json", {}).get("code") == "GOOD"
+        return httpx.Response(200 if ok else 401, json={"valid": ok, "site_id": "hq"}, request=httpx.Request("POST", u))
+
+    monkeypatch.setattr(httpx.Client, "post", fake_post)
+    with TestClient(w.app) as c:
+        good = c.post("/api/local/check-code", json={"code": "GOOD"}, headers={"X-Wizard-Token": "tok"})
+        bad = c.post("/api/local/check-code", json={"code": "BAD"}, headers={"X-Wizard-Token": "tok"})
+    assert good.status_code == 200 and good.json()["site_id"] == "hq"
+    assert bad.status_code == 401

@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.db import (
     AdminSession,
+    SetupCode,
     AuditEvent,
     BackupAttempt,
     BackupJob,
@@ -177,17 +178,174 @@ def login(db: Session, username: str, password: str, session_hours: int) -> str:
     return raw
 
 
-def session_user(db: Session, raw: str | None) -> User | None:
+def session_pair(db: Session, raw: str | None) -> tuple[User, AdminSession] | None:
     if not raw:
         return None
     sess = db.scalar(select(AdminSession).where(AdminSession.token_hash == sha256_hex(raw)))
     if sess is None or sess.revoked_at is not None or as_utc(sess.expires_at) < now():
         return None
-    return db.get(User, sess.user_id)
+    user = db.get(User, sess.user_id)
+    if user is None or user.disabled_at is not None:
+        return None
+    return user, sess
+
+
+def session_user(db: Session, raw: str | None) -> User | None:
+    """The signed-in admin, for the full admin API. A setup-code session
+    is not an admin session and gets None here."""
+    pair = session_pair(db, raw)
+    if pair is None or pair[1].setup_code_id:
+        return None
+    return pair[0]
+
+
+# Setup codes -----------------------------------------------------------------
+# Readable over the phone: no 0/O or 1/I/L. 20 characters of 31 = ~99 bits.
+SETUP_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+SETUP_CODE_LEN = 20
+SETUP_SESSION_HOURS = 2
+MAX_SETUP_CODE_HOURS = 30 * 24
+
+
+def normalize_setup_code(raw: str) -> str:
+    return "".join(ch for ch in (raw or "").upper() if ch.isalnum())
+
+
+def _new_setup_code() -> str:
+    import secrets
+
+    body = "".join(secrets.choice(SETUP_CODE_ALPHABET) for _ in range(SETUP_CODE_LEN))
+    return "-".join(body[i : i + 5] for i in range(0, SETUP_CODE_LEN, 5))
+
+
+def create_setup_code(db: Session, user: User, *, label: str, hours: int, max_uses: int, site_id: str = "") -> tuple[str, SetupCode]:
+    site_id = (site_id or "").lower()
+    if site_id and db.get(Site, site_id) is None:
+        raise HTTPException(422, "unknown site_id")
+    if not 1 <= hours <= MAX_SETUP_CODE_HOURS:
+        raise HTTPException(422, f"hours must be between 1 and {MAX_SETUP_CODE_HOURS}")
+    if not 1 <= max_uses <= 500:
+        raise HTTPException(422, "max_uses must be between 1 and 500")
+    raw = _new_setup_code()
+    rec = SetupCode(
+        id=new_id(),
+        code_hash=sha256_hex(normalize_setup_code(raw)),
+        label=(label or "")[:128],
+        site_id=site_id,
+        created_by=user.id,
+        expires_at=now() + timedelta(hours=hours),
+        max_uses=max_uses,
+    )
+    db.add(rec)
+    audit(db, actor_type="operator", actor_id=user.id, action="setup_code_create", resource_id=rec.id, extra={"site_id": site_id, "label": rec.label, "hours": hours, "max_uses": max_uses})
+    db.commit()
+    return raw, rec
+
+
+def setup_code_view(rec: SetupCode) -> dict:
+    expired = as_utc(rec.expires_at) < now()
+    if rec.revoked_at:
+        state = "REVOKED"
+    elif expired:
+        state = "EXPIRED"
+    elif rec.uses >= rec.max_uses:
+        state = "USED_UP"
+    else:
+        state = "ACTIVE"
+    return {
+        "id": rec.id,
+        "label": rec.label,
+        "site_id": rec.site_id,
+        "expires_at": as_utc(rec.expires_at).isoformat(),
+        "max_uses": rec.max_uses,
+        "uses": rec.uses,
+        "state": state,
+        "created_at": as_utc(rec.created_at).isoformat() if rec.created_at else None,
+    }
+
+
+def list_setup_codes(db: Session) -> list[dict]:
+    rows = db.scalars(select(SetupCode).order_by(SetupCode.created_at.desc()).limit(100)).all()
+    return [setup_code_view(r) for r in rows]
+
+
+def revoke_setup_code(db: Session, user: User, code_id: str) -> dict:
+    rec = db.get(SetupCode, code_id)
+    if rec is None:
+        raise HTTPException(404, "not found")
+    if rec.revoked_at is None:
+        rec.revoked_at = now()
+        # an install already in progress with this code stops too
+        db.execute(
+            update(AdminSession)
+            .where(AdminSession.setup_code_id == rec.id, AdminSession.revoked_at.is_(None))
+            .values(revoked_at=now())
+        )
+        audit(db, actor_type="operator", actor_id=user.id, action="setup_code_revoke", resource_id=rec.id)
+        db.commit()
+    return setup_code_view(rec)
+
+
+def _live_setup_code(db: Session, raw: str) -> SetupCode | None:
+    code = normalize_setup_code(raw)
+    if len(code) != SETUP_CODE_LEN:
+        return None
+    rec = db.scalar(select(SetupCode).where(SetupCode.code_hash == sha256_hex(code)))
+    if rec is None or rec.revoked_at is not None or as_utc(rec.expires_at) < now() or rec.uses >= rec.max_uses:
+        return None
+    return rec
+
+
+def check_setup_code(db: Session, raw: str) -> dict:
+    rec = _live_setup_code(db, raw)
+    if rec is None:
+        raise HTTPException(401, "setup code invalid or expired")
+    return {"valid": True, "site_id": rec.site_id, "label": rec.label, "expires_at": as_utc(rec.expires_at).isoformat()}
+
+
+def setup_code_login(db: Session, raw: str) -> str:
+    """One install run: counts one use and opens a short installer session."""
+    rec = _live_setup_code(db, raw)
+    if rec is None:
+        raise HTTPException(401, "setup code invalid or expired")
+    user = db.get(User, rec.created_by)
+    if user is None or user.disabled_at is not None:
+        raise HTTPException(401, "setup code invalid or expired")
+    used = db.execute(
+        update(SetupCode).where(SetupCode.id == rec.id, SetupCode.uses < SetupCode.max_uses).values(uses=SetupCode.uses + 1)
+    )
+    if (used.rowcount or 0) != 1:
+        db.rollback()
+        raise HTTPException(401, "setup code invalid or expired")
+    raw_session = random_token()
+    db.add(
+        AdminSession(
+            id=new_id(),
+            user_id=user.id,
+            token_hash=sha256_hex(raw_session),
+            expires_at=min(now() + timedelta(hours=SETUP_SESSION_HOURS), as_utc(rec.expires_at)),
+            setup_code_id=rec.id,
+        )
+    )
+    audit(db, actor_type="installer", actor_id=rec.id, action="setup_code_login", resource_id=rec.id)
+    db.commit()
+    return raw_session
+
+
+def installer_may_touch(db: Session, sess: AdminSession, device: Device) -> bool:
+    """A setup-code session may see and configure only the computers that
+    were enrolled with tokens minted under the same setup code."""
+    if not sess.setup_code_id:
+        return True
+    tok = db.get(EnrollmentToken, device.enrollment_token_id) if device.enrollment_token_id else None
+    if tok is None or not tok.session_id:
+        return False
+    minted_by = db.get(AdminSession, tok.session_id)
+    return minted_by is not None and minted_by.setup_code_id == sess.setup_code_id
 
 
 def mint_enrollment_token(
-    db: Session, user: User, label: str, minutes: int, site_id: str = "branch", department: str = ""
+    db: Session, user: User, label: str, minutes: int, site_id: str = "branch", department: str = "", session_id: str = ""
 ) -> tuple[str, EnrollmentToken]:
     site_id = (site_id or "branch").lower()
     if db.get(Site, site_id) is None:
@@ -209,6 +367,7 @@ def mint_enrollment_token(
         department=dept,
         created_by=user.id,
         expires_at=now() + timedelta(minutes=minutes),
+        session_id=session_id,
     )
     db.add(rec)
     audit(
@@ -252,6 +411,7 @@ def enroll_agent(db: Session, *, token: str, hostname: str, agent_version: str, 
         agent_sha=agent_sha,
         health="NEVER_BACKED_UP",
         site_id=rec.site_id or "branch",
+        enrollment_token_id=rec.id,
     )
     pol = db.scalar(select(Policy).where(Policy.name == "pilot-default"))
     rev = None

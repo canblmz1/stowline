@@ -48,6 +48,28 @@ class AdminSession(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    # Set for a session opened with a setup code: it may only enroll
+    # computers and name/configure the ones it enrolled (see
+    # services.installer_may_touch), never use the rest of the admin API.
+    setup_code_id: Mapped[str] = mapped_column(String(36), default="")
+
+
+class SetupCode(Base):
+    """A code an admin hands to whoever installs the computers, so the
+    installer never needs the admin password. Stored hashed; shown once."""
+
+    __tablename__ = "setup_codes"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    code_hash: Mapped[str] = mapped_column(String(128), unique=True)
+    label: Mapped[str] = mapped_column(String(128), default="")
+    # "" = any site; otherwise computers can only be enrolled into this one
+    site_id: Mapped[str] = mapped_column(String(64), default="")
+    created_by: Mapped[str] = mapped_column(String(36), default="")
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    max_uses: Mapped[int] = mapped_column(Integer, default=25)
+    uses: Mapped[int] = mapped_column(Integer, default=0)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class EnrollmentToken(Base):
@@ -61,6 +83,8 @@ class EnrollmentToken(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    # the admin session that minted it ("" for older tokens)
+    session_id: Mapped[str] = mapped_column(String(36), default="")
 
 
 class Site(Base):
@@ -139,6 +163,8 @@ class Device(Base):
     preferred_start_hhmm: Mapped[str] = mapped_column(String(5), default="")
     canary_state: Mapped[str] = mapped_column(String(32), default="")
     last_restore_state: Mapped[str] = mapped_column(String(32), default="")
+    # the enrollment token this device was created with ("" for older devices)
+    enrollment_token_id: Mapped[str] = mapped_column(String(36), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 

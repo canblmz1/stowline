@@ -131,7 +131,12 @@ that budget.
 ## 5. The installer
 
 Download `Stowline-Setup-<version>.exe` from the project's GitHub releases
-and give it to whoever sets up the computers. It asks for your server
+and give it to whoever sets up the computers, together with a **setup
+code** from the panel (**Settings → Setup codes**: valid for a chosen number
+of days and computers, optionally for one site only, revocable). The code
+can only enroll computers and name/configure the ones it enrolled -- it
+cannot sign in to the panel -- so the admin password is never typed on the
+PCs. The installer still accepts the admin login instead. It asks for your server
 address on its first screen and takes the sites and departments from the
 server (the public, non-secret `GET /api/v1/setup/catalog`). It needs
 administrator rights; it unpacks itself, removes a Stowline install that

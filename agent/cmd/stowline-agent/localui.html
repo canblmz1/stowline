@@ -495,6 +495,8 @@ textarea { min-height: 110px; resize: vertical; }
     const m = (e && e.message) || "";
     if (m === "not_connected") return "Bu bilgisayar Stowline sunucusuna bağlı değil.";
     if (m === "already_running") return "Zaten bir yedekleme sürüyor.";
+    if (m === "not_your_folder") return "Bu klasör bu bilgisayardaki başka bir kullanıcıya ait. Yalnızca kendi dosyalarınızı görebilir ve geri yükleyebilirsiniz.";
+    if (m === "caller_unknown") return "Hangi Windows hesabından bağlandığınız anlaşılamadı. Uygulamayı kapatıp yeniden açın.";
     if (/window/i.test(m)) return "Şu an yedekleme saatleri dışında. IT'nin belirlediği saatte kendiliğinden başlayacak.";
     if (e && e.status >= 500) return "Sunucuya ulaşılamadı; biraz sonra tekrar deneyin.";
     return m || "Bilinmeyen hata";

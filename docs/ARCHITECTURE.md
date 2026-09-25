@@ -12,7 +12,11 @@ runs as LocalSystem, installed in `C:\Stowline`)
   restore to staging, browse, apply folder selection, catalog...), WAN
   admission leases (renewed every 10 s with live progress);
 - serves the local UI on `127.0.0.1:18080` for the desktop app (Host/Origin
-  checks, POSTs need `X-Stowline-Local: 1`);
+  checks, POSTs need `X-Stowline-Local: 1`). Each request is tied to the
+  Windows account of the process that opened the connection (TCP table →
+  process → token); that account sees, searches and restores only its own
+  profile and folders outside every profile, never another account's
+  `C:\Users\<name>`, and only it gets read access to what it restored;
 - upgrades itself when the server pins a qualified new build.
 
 **Desktop programs** (Go + WebView2): `Stowline Setup.exe` (installer shell;

@@ -15,6 +15,16 @@ def _backup_window_guard_is_off_unless_a_test_turns_it_on(monkeypatch):
     yield
 
 
+@pytest.fixture(autouse=True)
+def _sign_in_limiter_starts_empty():
+    # The limiter is process-wide; a test that fails logins on purpose must
+    # not lock the shared admin out of the tests that follow it.
+    ratelimit = sys.modules.get("app.ratelimit")
+    if ratelimit is not None:
+        ratelimit.limiter.reset()
+    yield
+
+
 @pytest.fixture()
 def gateway_ready(monkeypatch):
     # Without a configured gateway the panel reports GATEWAY_UNAVAILABLE ahead

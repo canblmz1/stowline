@@ -16,7 +16,7 @@ import (
 )
 
 func TestLocalUIStatusReportsIdleWhenNoBackupIsRunning(t *testing.T) {
-	s := &localUIServer{Progress: &liveBackupProgress{}}
+	s := &localUIServer{Caller: testCaller, Progress: &liveBackupProgress{}}
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, localReq("GET", "/api/status", nil))
 	if rec.Code != 200 {
@@ -32,7 +32,7 @@ func TestLocalUIStatusReportsIdleWhenNoBackupIsRunning(t *testing.T) {
 func TestLocalUIStatusReportsLiveProgressWhileBackingUp(t *testing.T) {
 	p := &liveBackupProgress{}
 	p.update(domain.BackupProgress{PercentDone: 42, FilesDone: 4, TotalFiles: 10})
-	s := &localUIServer{Progress: p}
+	s := &localUIServer{Caller: testCaller, Progress: p}
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, localReq("GET", "/api/status", nil))
 	var body map[string]any
@@ -43,7 +43,7 @@ func TestLocalUIStatusReportsLiveProgressWhileBackingUp(t *testing.T) {
 }
 
 func TestLocalUIGetFolders(t *testing.T) {
-	s := &localUIServer{
+	s := &localUIServer{Caller: testCaller,
 		Progress:       &liveBackupProgress{},
 		CurrentFolders: func() ([]string, error) { return []string{`C:\Users\ahmet\Belgeler`}, nil },
 	}
@@ -59,7 +59,7 @@ func TestLocalUIGetFolders(t *testing.T) {
 
 func TestLocalUIPostFoldersAppliesOrdinaryFoldersDirectly(t *testing.T) {
 	var applied []string
-	s := &localUIServer{
+	s := &localUIServer{Caller: testCaller,
 		Progress:     &liveBackupProgress{},
 		ApplyFolders: func(ctx context.Context, roots []string) error { applied = roots; return nil },
 	}
@@ -76,7 +76,7 @@ func TestLocalUIPostFoldersAppliesOrdinaryFoldersDirectly(t *testing.T) {
 
 func TestLocalUIPostFoldersRequiresConfirmationForASensitivePath(t *testing.T) {
 	applyCalled := false
-	s := &localUIServer{
+	s := &localUIServer{Caller: testCaller,
 		Progress:     &liveBackupProgress{},
 		ApplyFolders: func(ctx context.Context, roots []string) error { applyCalled = true; return nil },
 	}
@@ -103,7 +103,7 @@ func TestLocalUIPostFoldersRequiresConfirmationForASensitivePath(t *testing.T) {
 }
 
 func TestLocalUISnapshotsFiltersToSucceededOnesWithASnapshotID(t *testing.T) {
-	s := &localUIServer{
+	s := &localUIServer{Caller: testCaller,
 		Progress: &liveBackupProgress{},
 		RecentAttempts: func(ctx context.Context, limit int) ([]ports.AttemptRecord, error) {
 			return []ports.AttemptRecord{
@@ -124,7 +124,7 @@ func TestLocalUISnapshotsFiltersToSucceededOnesWithASnapshotID(t *testing.T) {
 }
 
 func TestLocalUIBrowseRequiresASnapshotID(t *testing.T) {
-	s := &localUIServer{Progress: &liveBackupProgress{}, ListSnapshot: func(ctx context.Context, snapshotID, prefix string) ([]ports.SnapshotEntry, bool, error) {
+	s := &localUIServer{Caller: testCaller, Progress: &liveBackupProgress{}, ListSnapshot: func(ctx context.Context, snapshotID, prefix string) ([]ports.SnapshotEntry, bool, error) {
 		return nil, false, nil
 	}}
 	rec := httptest.NewRecorder()
@@ -135,7 +135,7 @@ func TestLocalUIBrowseRequiresASnapshotID(t *testing.T) {
 }
 
 func TestLocalUIBrowseReturnsEntries(t *testing.T) {
-	s := &localUIServer{Progress: &liveBackupProgress{}, ListSnapshot: func(ctx context.Context, snapshotID, prefix string) ([]ports.SnapshotEntry, bool, error) {
+	s := &localUIServer{Caller: testCaller, Progress: &liveBackupProgress{}, ListSnapshot: func(ctx context.Context, snapshotID, prefix string) ([]ports.SnapshotEntry, bool, error) {
 		if snapshotID != "snap-1" || prefix != "/C" {
 			t.Fatalf("unexpected args: %s %s", snapshotID, prefix)
 		}
@@ -153,7 +153,7 @@ func fakeRestores(run restoreFunc) *restoreJobs {
 }
 
 func TestLocalUIRestoreRequiresSnapshotAndSelections(t *testing.T) {
-	s := &localUIServer{Progress: &liveBackupProgress{}, Restores: fakeRestores(func(ctx context.Context, jobID, snapshot string, selections []string, progress func(domain.RestoreProgress)) (string, error) {
+	s := &localUIServer{Caller: testCaller, Progress: &liveBackupProgress{}, Restores: fakeRestores(func(ctx context.Context, jobID, snapshot string, selections []string, progress func(domain.RestoreProgress)) (string, error) {
 		return "", nil
 	})}
 	rec := httptest.NewRecorder()
@@ -165,7 +165,7 @@ func TestLocalUIRestoreRequiresSnapshotAndSelections(t *testing.T) {
 
 func TestLocalUIRestoreStartsInTheBackgroundAndIsPolledToDone(t *testing.T) {
 	release := make(chan struct{})
-	s := &localUIServer{
+	s := &localUIServer{Caller: testCaller,
 		Progress: &liveBackupProgress{},
 		Restores: fakeRestores(func(ctx context.Context, jobID, snapshot string, selections []string, progress func(domain.RestoreProgress)) (string, error) {
 			progress(domain.RestoreProgress{PercentDone: 50, BytesDone: 5, TotalBytes: 10})
@@ -204,14 +204,14 @@ func TestLocalUIRestoreStartsInTheBackgroundAndIsPolledToDone(t *testing.T) {
 }
 
 func TestLocalUIRestoreCanBeCancelled(t *testing.T) {
-	s := &localUIServer{
+	s := &localUIServer{Caller: testCaller,
 		Progress: &liveBackupProgress{},
 		Restores: fakeRestores(func(ctx context.Context, jobID, snapshot string, selections []string, progress func(domain.RestoreProgress)) (string, error) {
 			<-ctx.Done()
 			return "", ctx.Err()
 		}),
 	}
-	job, _ := s.Restores.Start("snap-1", []string{"/C/x"})
+	job, _ := s.Restores.StartAs(testSID, "snap-1", []string{"/C/x"})
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, localReq("POST", "/api/restores/"+job.ID+"/cancel", strings.NewReader(`{}`)))
 	if rec.Code != 200 {
@@ -222,7 +222,7 @@ func TestLocalUIRestoreCanBeCancelled(t *testing.T) {
 
 func TestLocalUIBackupNowQueuesOnTheControlPlaneAndRefusesWhileRunning(t *testing.T) {
 	calls := 0
-	s := &localUIServer{Progress: &liveBackupProgress{}, RequestBackup: func(ctx context.Context) error { calls++; return nil }}
+	s := &localUIServer{Caller: testCaller, Progress: &liveBackupProgress{}, RequestBackup: func(ctx context.Context) error { calls++; return nil }}
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, localReq("POST", "/api/backup-now", strings.NewReader(`{}`)))
 	if rec.Code != 202 || calls != 1 {
@@ -238,7 +238,7 @@ func TestLocalUIBackupNowQueuesOnTheControlPlaneAndRefusesWhileRunning(t *testin
 
 func TestLocalUIHelpSendsTheMessageAndRejectsAnEmptyOne(t *testing.T) {
 	var sent string
-	s := &localUIServer{Progress: &liveBackupProgress{}, SendMessage: func(ctx context.Context, m string) error { sent = m; return nil }}
+	s := &localUIServer{Caller: testCaller, Progress: &liveBackupProgress{}, SendMessage: func(ctx context.Context, m string) error { sent = m; return nil }}
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, localReq("POST", "/api/help", strings.NewReader(`{"message":"  Excel dosyam yok  "}`)))
 	if rec.Code != 200 || sent != "Excel dosyam yok" {
@@ -253,7 +253,7 @@ func TestLocalUIHelpSendsTheMessageAndRejectsAnEmptyOne(t *testing.T) {
 
 func TestLocalUISearchFindsFilesByNameAndCachesTheListing(t *testing.T) {
 	listings := 0
-	s := &localUIServer{Progress: &liveBackupProgress{}, ListSnapshotFull: func(ctx context.Context, snapshotID string) ([]ports.SnapshotEntry, error) {
+	s := &localUIServer{Caller: testCaller, Progress: &liveBackupProgress{}, ListSnapshotFull: func(ctx context.Context, snapshotID string) ([]ports.SnapshotEntry, error) {
 		listings++
 		return []ports.SnapshotEntry{
 			{Name: "Faturalar", Type: "dir", Path: "/C/Muhasebe/Faturalar"},
@@ -280,7 +280,7 @@ func TestLocalUISearchFindsFilesByNameAndCachesTheListing(t *testing.T) {
 func TestLocalUIStatusNamesTheBackupPhase(t *testing.T) {
 	p := &liveBackupProgress{}
 	p.update(domain.BackupProgress{PercentDone: 100, BytesDone: 10, TotalBytes: 10})
-	s := &localUIServer{Progress: p}
+	s := &localUIServer{Caller: testCaller, Progress: p}
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, localReq("GET", "/api/status", nil))
 	if !strings.Contains(rec.Body.String(), `"phase":"finalizing"`) {
@@ -289,7 +289,7 @@ func TestLocalUIStatusNamesTheBackupPhase(t *testing.T) {
 }
 
 func TestLocalUIIndexServesTheEmbeddedPage(t *testing.T) {
-	s := &localUIServer{Progress: &liveBackupProgress{}}
+	s := &localUIServer{Caller: testCaller, Progress: &liveBackupProgress{}}
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, localReq("GET", "/", nil))
 	if rec.Code != 200 || rec.Header().Get("Content-Type") != "text/html; charset=utf-8" {
@@ -314,7 +314,7 @@ func localReq(method, target string, body io.Reader) *http.Request {
 }
 
 func guardedServer(applied *bool) *localUIServer {
-	return &localUIServer{
+	return &localUIServer{Caller: testCaller,
 		Progress:     &liveBackupProgress{},
 		ApplyFolders: func(ctx context.Context, roots []string) error { *applied = true; return nil },
 		Restores: fakeRestores(func(ctx context.Context, jobID, snapshot string, selections []string, progress func(domain.RestoreProgress)) (string, error) {
@@ -356,7 +356,7 @@ func TestLocalUIRejectsAStateChangeWithoutTheLocalHeader(t *testing.T) {
 func TestLocalUIRejectsAStateChangeFromAForeignOrigin(t *testing.T) {
 	applied := false
 	s := guardedServer(&applied)
-	r := localReq("POST", "/api/folders", strings.NewReader(`{"source_roots":["C:/Users/test/Belgeler"]}`))
+	r := localReq("POST", "/api/folders", strings.NewReader(`{"source_roots":["C:/Users/ahmet/Belgeler"]}`))
 	r.Header.Set("Origin", "https://evil.example")
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, r)
@@ -368,7 +368,7 @@ func TestLocalUIRejectsAStateChangeFromAForeignOrigin(t *testing.T) {
 func TestLocalUIAcceptsTheSameOriginPage(t *testing.T) {
 	applied := false
 	s := guardedServer(&applied)
-	r := localReq("POST", "/api/folders", strings.NewReader(`{"source_roots":["C:/Users/test/Belgeler"]}`))
+	r := localReq("POST", "/api/folders", strings.NewReader(`{"source_roots":["C:/Users/ahmet/Belgeler"]}`))
 	r.Header.Set("Origin", "http://127.0.0.1:18080")
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, r)
@@ -393,24 +393,24 @@ func TestLocalUIPageEscapesNamesBeforeInsertingThemAsHTML(t *testing.T) {
 
 func TestLocalUIFolderChangeIsReportedToTheControlPlane(t *testing.T) {
 	reported := make(chan []string, 1)
-	s := &localUIServer{
+	s := &localUIServer{Caller: testCaller,
 		Progress:                   &liveBackupProgress{},
 		ApplyFolders:               func(ctx context.Context, roots []string) error { return nil },
 		ReportSelfServiceSelection: func(ctx context.Context, roots []string) error { reported <- roots; return nil },
 	}
 	rec := httptest.NewRecorder()
-	s.Handler().ServeHTTP(rec, localReq("POST", "/api/folders", strings.NewReader(`{"source_roots":["C:/Users/test/Belgeler"]}`)))
+	s.Handler().ServeHTTP(rec, localReq("POST", "/api/folders", strings.NewReader(`{"source_roots":["C:/Users/ahmet/Belgeler"]}`)))
 	if rec.Code != 200 {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
 	}
-	if got := <-reported; len(got) != 1 || got[0] != "C:/Users/test/Belgeler" {
+	if got := <-reported; len(got) != 1 || got[0] != "C:/Users/ahmet/Belgeler" {
 		t.Fatalf("expected the new roots reported, got %v", got)
 	}
 }
 
 func TestLocalUIFailedFolderChangeIsNeverReported(t *testing.T) {
 	called := false
-	s := &localUIServer{
+	s := &localUIServer{Caller: testCaller,
 		Progress:                   &liveBackupProgress{},
 		ApplyFolders:               func(ctx context.Context, roots []string) error { return errors.New("rejected") },
 		ReportSelfServiceSelection: func(ctx context.Context, roots []string) error { called = true; return nil },
@@ -420,4 +420,11 @@ func TestLocalUIFailedFolderChangeIsNeverReported(t *testing.T) {
 	if rec.Code != 422 || called {
 		t.Fatalf("expected 422 and no report, got %d called=%v", rec.Code, called)
 	}
+}
+
+const testSID = "S-1-5-21-1-1001"
+
+// testCaller is "ahmet" on a PC that bob also uses.
+func testCaller(r *http.Request) (localCaller, error) {
+	return newLocalCaller(testSID, `C:\Users\ahmet`, `C:\Users`, []string{`C:\Users\ahmet`, `C:\Users\bob`, `C:\Windows\ServiceProfiles\LocalService`}), nil
 }

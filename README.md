@@ -30,7 +30,7 @@ It grew out of a real multi-site business with ordinary office PCs and thin inte
 
 |  |  |
 |---|---|
-| 🧩 **One file to install** | `Stowline Setup.exe`: type the server address, pick site and department, sign in as admin — done. It finds the work files (Desktop, Documents, Office files, Outlook PST), skips games, caches and credential files, and replaces an older install by itself. |
+| 🧩 **One file to install** | `Stowline Setup.exe`: type the server address and a setup code from the panel, pick site and department — done. The admin password is never typed on the PCs. It finds the work files (Desktop, Documents, Office files, Outlook PST), skips games, caches and credential files, and replaces an older install by itself. |
 | 🚦 **Won't choke the office line** | Each site gets a measured upload speed and a budget (say 40 %). The server admits only as many simultaneous backups as fit, and the gateway caps the site's total. |
 | 🔒 **Encrypted, no cloud keys on PCs** | restic encrypts on the PC. PCs only talk to your server; only the gateway holds the storage credentials, and each PC can reach only its own repository. |
 | 📸 **Open files too** | Windows VSS snapshots, so open Outlook PSTs and Excel files are backed up consistently. |
@@ -54,7 +54,7 @@ Caddy gets the HTTPS certificate on its own. Open `https://<your domain>`, sign 
 
 **2 · Download the installer** — `Stowline-Setup-<version>.exe` from the [latest release](../../releases/latest).
 
-**3 · Run it on each PC** — it asks for your server address, then the site, department and folders; one click at the end starts the first backup.
+**3 · Run it on each PC** — create a setup code under **Settings → Setup codes**; the installer asks for the server address and that code, then the site, department and folders; one click at the end starts the first backup.
 
 > The installer is not code-signed, so Windows SmartScreen asks once: *More info → Run anyway*.
 
@@ -163,7 +163,7 @@ Stowline, bir ofisteki (ya da birkaç şubedeki) her Windows bilgisayarın iş d
 Sıradan ofis bilgisayarları ve kısıtlı internet hatları olan, birden çok şubeli gerçek bir işletmede ortaya çıktı ve yayınlanmadan önce orada canlıda çalıştı.
 
 **Neler yapar:**
-- 🧩 **Tek dosyalık kurulum** — sunucu adresini yazın, şube ve departmanı seçin, yönetici olarak giriş yapın. İş dosyalarını kendisi bulur; oyunları, önbellekleri ve şifre/anahtar dosyalarını dışarıda bırakır; eski kurulumu kendisi kaldırır.
+- 🧩 **Tek dosyalık kurulum** — sunucu adresini ve panelden alınan kurulum kodunu yazın, şube ve departmanı seçin. Yönetici şifresi bilgisayarlara hiç yazılmaz. İş dosyalarını kendisi bulur; oyunları, önbellekleri ve şifre/anahtar dosyalarını dışarıda bırakır; eski kurulumu kendisi kaldırır.
 - 🚦 **Ofis hattını tıkamaz** — her şubenin ölçülmüş hızı ve bütçesi (ör. %40) vardır; aynı anda yalnızca sığacak kadar yedek çalışır.
 - 🔒 **Şifreli, bilgisayarlarda bulut şifresi yok** — depolama bilgileri yalnızca sunucudaki gateway'dedir; her bilgisayar yalnızca kendi deposuna erişir.
 - 📸 **Açık dosyalar da** — VSS sayesinde açık Outlook PST ve Excel dosyaları tutarlı yedeklenir.

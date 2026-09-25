@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -24,6 +25,7 @@ from app.db import (
     PolicyRevision,
     Repository,
     RestoreRequest,
+    SetupCode,
     Snapshot,
     SnapshotCatalog,
     SnapshotCatalogEntry,
@@ -31,7 +33,7 @@ from app.db import (
     make_engine,
     session_factory,
 )
-from app import services
+from app import ratelimit, services
 from app.errors_ux import explain_error
 from app.security import new_id, payload_hash, sha256_hex, validate_policy_config
 from app.version import RELEASE_VERSION
@@ -55,6 +57,17 @@ class StrictModel(BaseModel):
 class LoginIn(StrictModel):
     username: str
     password: str
+
+
+class SetupCodeIn(StrictModel):
+    code: str = Field(max_length=64)
+
+
+class SetupCodeCreateIn(StrictModel):
+    label: str = Field(default="", max_length=128)
+    hours: int = Field(default=72, ge=1, le=720)
+    max_uses: int = Field(default=25, ge=1, le=500)
+    site_id: str = ""
 
 
 class EnrollmentTokenIn(StrictModel):
@@ -322,9 +335,11 @@ def csrf_ok(request: Request) -> None:
     if request.method in ("GET", "HEAD", "OPTIONS"):
         return
     origin = request.headers.get("origin") or ""
-    if origin:
-        host = request.headers.get("host") or ""
-        if host and host not in origin and not settings.lab_mode:
+    if origin and not settings.lab_mode:
+        # Exact host match: "https://panel.example.com.evil.net" contains
+        # the host as a substring but is another site.
+        host = (request.headers.get("host") or "").lower()
+        if not host or urlsplit(origin).netloc.lower() != host:
             raise HTTPException(403, "csrf origin")
 
 
@@ -335,6 +350,28 @@ def operator(request: Request, db: Session = Depends(get_db)):
     if user is None:
         raise HTTPException(401, "unauthenticated")
     return user
+
+
+def setup_actor(request: Request, db: Session = Depends(get_db)):
+    """The admin API calls the setup wizard makes. An admin session gets
+    them all; a setup-code session only for the computers it enrolled
+    (services.installer_may_touch)."""
+    csrf_ok(request)
+    pair = services.session_pair(db, request.cookies.get(COOKIE))
+    if pair is None:
+        raise HTTPException(401, "unauthenticated")
+    return pair
+
+
+def _device_for(db: Session, actor, device_id: str) -> Device:
+    d = db.get(Device, device_id)
+    if d is None or not services.installer_may_touch(db, actor[1], d):
+        raise HTTPException(404, "not found")
+    return d
+
+
+# What a setup-code session may set on the computers it enrolled.
+INSTALLER_PATCH_FIELDS = {"display_name", "department", "preferred_start_hhmm", "agent_sha", "service_state"}
 
 
 def agent_pair(request: Request, db: Session = Depends(get_db), authorization: str = Header(default="")):
@@ -388,9 +425,21 @@ def version():
     return {"schema_version": 1, "product": "stowline", "version": RELEASE_VERSION, "org_name": settings.org_name, "not": ["production", "1.0"]}
 
 
+def client_ip(request: Request) -> str:
+    return request.client.host if request.client else ""
+
+
 @app.post("/api/v1/auth/login")
-def login(body: LoginIn, response: Response, db: Session = Depends(get_db)):
-    raw = services.login(db, body.username, body.password, settings.session_hours)
+def login(body: LoginIn, request: Request, response: Response, db: Session = Depends(get_db)):
+    ip = client_ip(request)
+    ratelimit.check("login", ip, body.username)
+    try:
+        raw = services.login(db, body.username, body.password, settings.session_hours)
+    except HTTPException as exc:
+        if exc.status_code == 401:
+            ratelimit.failed("login", ip, body.username)
+        raise
+    ratelimit.succeeded("login", body.username)
     response.set_cookie(COOKIE, raw, httponly=True, samesite="strict", secure=settings.cookie_secure(), max_age=settings.session_hours * 3600)
     return {"schema_version": 1, "ok": True}
 
@@ -466,10 +515,8 @@ def devices(db: Session = Depends(get_db), user=Depends(operator), q: str = "", 
 
 
 @app.get("/api/v1/admin/devices/{device_id}")
-def device_detail(device_id: str, db: Session = Depends(get_db), user=Depends(operator)):
-    d = db.get(Device, device_id)
-    if d is None:
-        raise HTTPException(404, "not found")
+def device_detail(device_id: str, db: Session = Depends(get_db), actor=Depends(setup_actor)):
+    d = _device_for(db, actor, device_id)
     repo = db.scalar(select(Repository).where(Repository.device_id == d.id, Repository.role == "PRIMARY"))
     from app.db import BackupJob
 
@@ -513,10 +560,17 @@ def admin_snapshot_reconciliation(device_id: str, db: Session = Depends(get_db),
 
 
 @app.post("/api/v1/admin/enrollment-tokens")
-def enrollment_tokens(body: EnrollmentTokenIn, db: Session = Depends(get_db), user=Depends(operator), idempotency_key: str = Header(default="", alias="Idempotency-Key")):
+def enrollment_tokens(body: EnrollmentTokenIn, db: Session = Depends(get_db), actor=Depends(setup_actor), idempotency_key: str = Header(default="", alias="Idempotency-Key")):
     _ = idempotency_key
+    user, sess = actor
+    minutes = body.minutes or settings.enrollment_minutes
+    if sess.setup_code_id:
+        code = db.get(SetupCode, sess.setup_code_id)
+        if code is None or (code.site_id and body.site_id.lower() != code.site_id):
+            raise HTTPException(403, "this setup code is for another site")
+        minutes = min(minutes, 15)
     raw, rec = services.mint_enrollment_token(
-        db, user, body.label, body.minutes or settings.enrollment_minutes, body.site_id, body.department
+        db, user, body.label, minutes, body.site_id, body.department, session_id=sess.id
     )
     return {
         "schema_version": 1,
@@ -554,8 +608,15 @@ def admin_revoke(device_id: str, db: Session = Depends(get_db), user=Depends(ope
 
 
 @app.post("/api/v1/admin/me/password")
-def admin_change_password(body: PasswordChangeIn, db: Session = Depends(get_db), user=Depends(operator)):
-    services.change_admin_password(db, user, body.current_password, body.new_password)
+def admin_change_password(body: PasswordChangeIn, request: Request, db: Session = Depends(get_db), user=Depends(operator)):
+    ip = client_ip(request)
+    ratelimit.check("password", ip, user.username)
+    try:
+        services.change_admin_password(db, user, body.current_password, body.new_password)
+    except HTTPException as exc:
+        if exc.status_code == 403:
+            ratelimit.failed("password", ip, user.username)
+        raise
     return {"schema_version": 1, "ok": True}
 
 
@@ -606,11 +667,12 @@ def admin_device_unarchive(device_id: str, db: Session = Depends(get_db), user=D
 
 
 @app.patch("/api/v1/admin/devices/{device_id}")
-def admin_device_patch(device_id: str, body: DevicePatchIn, db: Session = Depends(get_db), user=Depends(operator)):
-    d = db.get(Device, device_id)
-    if d is None:
-        raise HTTPException(404, "not found")
-    services.patch_device(db, user, d, body.model_dump(exclude_unset=True))
+def admin_device_patch(device_id: str, body: DevicePatchIn, db: Session = Depends(get_db), actor=Depends(setup_actor)):
+    d = _device_for(db, actor, device_id)
+    changes = body.model_dump(exclude_unset=True)
+    if actor[1].setup_code_id and set(changes) - INSTALLER_PATCH_FIELDS:
+        raise HTTPException(403, "a setup code cannot change " + ", ".join(sorted(set(changes) - INSTALLER_PATCH_FIELDS)))
+    services.patch_device(db, actor[0], d, changes)
     return {"schema_version": 1, "device": _device(d)}
 
 
@@ -633,12 +695,11 @@ def admin_device_resume(device_id: str, db: Session = Depends(get_db), user=Depe
 
 
 @app.post("/api/v1/admin/devices/{device_id}/selection")
-def admin_device_selection(device_id: str, body: SelectionIn, db: Session = Depends(get_db), user=Depends(operator)):
+def admin_device_selection(device_id: str, body: SelectionIn, db: Session = Depends(get_db), actor=Depends(setup_actor)):
     from app.selection import SelectionError, compile_selection
 
-    d = db.get(Device, device_id)
-    if d is None:
-        raise HTTPException(404, "not found")
+    user = actor[0]
+    d = _device_for(db, actor, device_id)
     try:
         manifest = compile_selection(selected=body.selected, office_files=body.office_files)
         if body.preferred_start_hhmm:
@@ -654,6 +715,50 @@ def admin_device_selection(device_id: str, body: SelectionIn, db: Session = Depe
         "applied_locally": rec.applied_locally,
         "note": "Qualified agent applies source_roots from the endpoint pilot.json. Re-run Setup Wizard on the PC to apply a new selection locally.",
     }
+
+
+@app.post("/api/v1/setup/code-check")
+def setup_code_check(body: SetupCodeIn, request: Request, db: Session = Depends(get_db)):
+    """Lets the setup wizard say "wrong code" on its first screen instead of
+    after the whole install. Does not use up the code."""
+    ip = client_ip(request)
+    ratelimit.check("setup-code", ip)
+    try:
+        return {"schema_version": 1, **services.check_setup_code(db, body.code)}
+    except HTTPException as exc:
+        if exc.status_code == 401:
+            ratelimit.failed("setup-code", ip)
+        raise
+
+
+@app.post("/api/v1/setup/login")
+def setup_login(body: SetupCodeIn, request: Request, response: Response, db: Session = Depends(get_db)):
+    ip = client_ip(request)
+    ratelimit.check("setup-code", ip)
+    try:
+        raw = services.setup_code_login(db, body.code)
+    except HTTPException as exc:
+        if exc.status_code == 401:
+            ratelimit.failed("setup-code", ip)
+        raise
+    response.set_cookie(COOKIE, raw, httponly=True, samesite="strict", secure=settings.cookie_secure(), max_age=services.SETUP_SESSION_HOURS * 3600)
+    return {"schema_version": 1, "ok": True}
+
+
+@app.get("/api/v1/admin/setup-codes")
+def admin_setup_codes(db: Session = Depends(get_db), user=Depends(operator)):
+    return {"schema_version": 1, "codes": services.list_setup_codes(db)}
+
+
+@app.post("/api/v1/admin/setup-codes")
+def admin_setup_code_create(body: SetupCodeCreateIn, db: Session = Depends(get_db), user=Depends(operator)):
+    raw, rec = services.create_setup_code(db, user, label=body.label, hours=body.hours, max_uses=body.max_uses, site_id=body.site_id)
+    return {"schema_version": 1, "code": raw, "shown_once": True, **services.setup_code_view(rec)}
+
+
+@app.post("/api/v1/admin/setup-codes/{code_id}/revoke")
+def admin_setup_code_revoke(code_id: str, db: Session = Depends(get_db), user=Depends(operator)):
+    return {"schema_version": 1, **services.revoke_setup_code(db, user, code_id)}
 
 
 @app.get("/api/v1/setup/catalog")

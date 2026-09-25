@@ -177,7 +177,81 @@ Pages["olaylar"] = {
 
 /* ---------- Ayarlar ---------- */
 App.ui.settingsTab = "subeler";
-const SETTINGS_TABS = [["subeler", "Şubeler"], ["depolama", "Depolama"], ["hesap", "Yönetici hesabı"], ["surum", "Sürüm"]];
+const SETTINGS_TABS = [["subeler", "Şubeler"], ["kurulum", "Kurulum kodları"], ["depolama", "Depolama"], ["hesap", "Yönetici hesabı"], ["surum", "Sürüm"]];
+
+const SETUP_CODE_STATE = { ACTIVE: ["ok", "Geçerli"], USED_UP: ["warn", "Hakkı bitti"], EXPIRED: ["warn", "Süresi doldu"], REVOKED: ["bad", "İptal edildi"] };
+const SETUP_CODE_HOURS = [[24, "1 gün"], [72, "3 gün"], [168, "7 gün"], [720, "30 gün"]];
+
+const siteOptions = (selected, withAny) =>
+  (withAny ? `<option value="" ${selected ? "" : "selected"}>Tüm şubeler</option>` : "") +
+  ((App.state.dashboard || {}).sites || []).map((s) => `<option value="${esc(s.id)}" ${selected === s.id ? "selected" : ""}>${esc(siteLabel(s.id))}</option>`).join("");
+
+// Shown once, right after it is created: the server keeps only a hash.
+const setupCodeShown = (r) => `<div class="p-3 rounded-lg bg-surface-container-low border border-outline-variant">
+  <div class="flex items-center gap-2"><code class="flex-1 px-2 py-1.5 rounded bg-inverse-surface text-inverse-on-surface font-code-md text-code-md break-all select-all">${esc(r.code)}</code><button type="button" data-copy="${esc(r.code)}" class="${UI.btnSecondary}">${icon("content_copy", "text-[18px]")}<span>Kopyala</span></button></div>
+  <p class="mt-2 font-body-sm text-body-sm text-outline">Kod yalnızca şimdi gösterilir. ${esc(fmt(r.expires_at))}'e kadar, en fazla ${r.max_uses} kurulumda geçerlidir.</p></div>`;
+
+async function setupCodesTab() {
+  const codes = (await api("/api/v1/admin/setup-codes")).codes || [];
+  const rows = codes
+    .map((c) => {
+      const [kind, label] = SETUP_CODE_STATE[c.state] || ["warn", c.state];
+      return `<tr><td class="${UI.td}" data-no-i18n>${esc(c.label || "—")}</td><td class="${UI.td}">${c.site_id ? esc(siteLabel(c.site_id)) : "Tüm şubeler"}</td><td class="${UI.td} font-code-sm text-code-sm whitespace-nowrap">${c.uses} / ${c.max_uses}</td><td class="${UI.td} font-code-sm text-code-sm whitespace-nowrap">${esc(fmt(c.expires_at))}</td><td class="${UI.td}">${pill(kind, label)}</td>
+        <td class="${UI.td} text-right">${c.state === "ACTIVE" ? `<button type="button" data-revoke-code="${esc(c.id)}" class="${UI.btnDangerOutline} whitespace-nowrap">Kodu iptal et</button>` : ""}</td></tr>`;
+    })
+    .join("");
+  return `<div class="grid grid-cols-1 gap-6">
+    <div class="${UI.card} p-5 max-w-xl"><h3 class="font-headline-sm text-headline-sm font-bold text-on-surface mb-2 flex items-center gap-2">${icon("key", "text-primary")}Yeni kurulum kodu</h3>
+      <p class="mb-4 font-body-sm text-body-sm text-outline">Bilgisayarları kuran kişiye yönetici şifresi yerine bu kodu verin. Kod yalnızca bilgisayar kaydetmeye ve kaydettiği bilgisayarın adını, departmanını ve klasörlerini ayarlamaya yarar; panele giriş yapamaz.</p>
+      <form id="sc-form" class="space-y-4">
+        <div><label class="${UI.label}">Etiket</label><input id="sc-label" class="${UI.input}" maxlength="128" placeholder="Örn. Muhasebe kurulumları"/></div>
+        <div class="grid grid-cols-2 gap-4">
+          <div><label class="${UI.label}">Şube</label><select id="sc-site" class="${UI.input}">${siteOptions("", true)}</select></div>
+          <div><label class="${UI.label}">Geçerlilik</label><select id="sc-hours" class="${UI.input}">${SETUP_CODE_HOURS.map(([h, l]) => `<option value="${h}" ${h === 72 ? "selected" : ""}>${l}</option>`).join("")}</select></div>
+        </div>
+        <div><label class="${UI.label}">En fazla kaç bilgisayar</label><input id="sc-uses" type="number" min="1" max="500" value="10" class="${UI.input}"/></div>
+        <div class="flex justify-end"><button type="submit" class="${UI.btnPrimary}">${icon("add", "text-[18px]")}<span>Kod oluştur</span></button></div>
+      </form>
+      <div id="sc-out" class="mt-4"></div></div>
+    <div class="${UI.card} p-5"><h3 class="font-headline-sm text-headline-sm font-bold text-on-surface mb-3">Kodlar</h3>${
+      codes.length
+        ? `<div class="overflow-x-auto"><table class="w-full text-left border-collapse"><thead><tr class="bg-surface-container-low border-y border-outline-variant"><th class="${UI.th}">Etiket</th><th class="${UI.th}">Şube</th><th class="${UI.th}">Kullanım</th><th class="${UI.th}">Bitiş</th><th class="${UI.th}">Durum</th><th class="${UI.th}"></th></tr></thead><tbody class="divide-y divide-outline-variant/60">${rows}</tbody></table></div>`
+        : `<div class="py-6 text-center text-outline">Henüz kurulum kodu yok.</div>`
+    }</div></div>`;
+}
+
+function bindSetupCodes(view) {
+  const form = $("#sc-form", view);
+  if (form)
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      try {
+        const r = await post("/api/v1/admin/setup-codes", {
+          label: $("#sc-label", view).value.trim(),
+          site_id: $("#sc-site", view).value,
+          hours: parseInt($("#sc-hours", view).value, 10),
+          max_uses: parseInt($("#sc-uses", view).value, 10) || 1,
+        });
+        await Pages["ayarlar"].render(view);
+        $("#sc-out", view).innerHTML = setupCodeShown(r);
+        bindCopy(view);
+      } catch (err) {
+        toast(err.message, "bad");
+      }
+    };
+  $$("[data-revoke-code]", view).forEach((b) => {
+    b.onclick = async () => {
+      if (!confirm("Bu kod iptal edilsin mi? Kodla devam eden kurulumlar da durur.")) return;
+      try {
+        await post(`/api/v1/admin/setup-codes/${b.getAttribute("data-revoke-code")}/revoke`);
+        toast("Kurulum kodu iptal edildi.");
+        Pages["ayarlar"].render(view);
+      } catch (err) {
+        toast(err.message, "bad");
+      }
+    };
+  });
+}
 const GATEWAY_REG_TR = { configured: "Hazır", unconfigured: "Yapılandırılmamış", error: "Hata var" };
 const STORAGE_KIND_TR = { REST_GATEWAY: "REST ağ geçidi", PILOT_RCLONE_DRIVE: "Google Drive (pilot)" };
 const STORAGE_STATUS_TR = { IMPLEMENTED: "Hazır", PLANNED: "Planlandı" };
@@ -241,7 +315,8 @@ Pages["ayarlar"] = {
     const tab = App.ui.settingsTab;
     const dash = App.state.dashboard || {};
     let inner = "";
-    if (tab === "subeler") inner = `<div class="grid grid-cols-1 xl:grid-cols-2 gap-6">${(dash.sites || []).map(siteSettingsCard).join("") || `<div class="${UI.card} p-8 text-outline">Şube yok.</div>`}</div>`;
+    if (tab === "kurulum") inner = await setupCodesTab();
+    else if (tab === "subeler") inner = `<div class="grid grid-cols-1 xl:grid-cols-2 gap-6">${(dash.sites || []).map(siteSettingsCard).join("") || `<div class="${UI.card} p-8 text-outline">Şube yok.</div>`}</div>`;
     else if (tab === "depolama") {
       const profiles = (await api("/api/v1/admin/storage-profiles")).items || [];
       const usage = App.state.usage && App.state.usage.available ? App.state.usage : null;
@@ -294,20 +369,21 @@ Pages["ayarlar"] = {
     });
     const pw = $("#btn-pw");
     if (pw) pw.onclick = passwordModal;
+    if (tab === "kurulum") bindSetupCodes(view);
   },
 };
 
 /* ---------- Yeni bilgisayar ekle ---------- */
 function openAddComputer() {
   const known = new Set(App.state.devices.map((d) => d.id));
-  let site = "hq";
+  let site = (((App.state.dashboard || {}).sites || [])[0] || {}).id || "hq";
   let dept = "IT";
   let poll = null;
   const m = openModal({ title: "Yeni bilgisayar ekle", size: "max-w-lg", onClose: () => poll && clearInterval(poll), html: "" });
   const stepBar = (n) => `<div class="flex items-center gap-2 mb-5">${["Şube ve departman", "Kurulum", "Bağlantı"].map((l, i) => `<div class="flex items-center gap-2 ${i ? "flex-1" : ""}">${i ? `<div class="h-px flex-1 bg-outline-variant"></div>` : ""}<span class="w-6 h-6 rounded-full flex items-center justify-center font-label-md text-label-md ${i + 1 <= n ? "bg-primary text-on-primary" : "bg-surface-container-high text-outline"}">${i + 1}</span><span class="font-label-md text-label-md ${i + 1 === n ? "text-on-surface" : "text-outline"}">${l}</span></div>`).join("")}</div>`;
   const step1 = () => {
     m.body.innerHTML = `${stepBar(1)}<div class="space-y-4">
-      <div><label class="${UI.label}">Şube</label><select id="ac-site" class="${UI.input}"><option value="hq" ${site === "hq" ? "selected" : ""}>HQ</option><option value="branch" ${site === "branch" ? "selected" : ""}>Branch</option></select></div>
+      <div><label class="${UI.label}">Şube</label><select id="ac-site" class="${UI.input}">${siteOptions(site, false)}</select></div>
       <div><label class="${UI.label}">Departman</label><select id="ac-dept" class="${UI.input}">${DEPARTMENTS.map((x) => `<option value="${x}" ${dept === x ? "selected" : ""}>${esc(DEPT_LABEL[x] || x)}</option>`).join("")}</select></div>
       <div class="flex justify-end"><button type="button" id="ac-next" class="${UI.btnPrimary}">Devam</button></div></div>`;
     $("#ac-next", m.el).onclick = () => {
@@ -318,13 +394,23 @@ function openAddComputer() {
   };
   const step2 = () => {
     m.body.innerHTML = `${stepBar(2)}<ol class="space-y-3 font-body-md text-body-md text-on-surface-variant">
-      <li class="flex gap-2"><span class="font-bold text-primary">1.</span><span>Kurulacak bilgisayara <strong>Setup.cmd</strong> içeren kurulum klasörünü kopyalayın.</span></li>
-      <li class="flex gap-2"><span class="font-bold text-primary">2.</span><span>Setup.cmd dosyasını <strong>yönetici olarak</strong> çalıştırın; tarayıcıda açılan sihirbaza yönetici kullanıcı adı/şifresini, <strong>${esc(siteLabel(site))}</strong> şubesini ve <strong>${esc(DEPT_LABEL[dept] || dept)}</strong> departmanını girin.</span></li>
+      <li class="flex gap-2"><span class="font-bold text-primary">1.</span><span>Aşağıdan bir kurulum kodu oluşturun (7 gün, 10 bilgisayar için geçerli).</span></li>
+      <li class="flex gap-2"><span class="font-bold text-primary">2.</span><span>Bilgisayarda şu dosyayı çalıştırın: <strong>Stowline Setup.exe</strong>. Sihirbazda kodu yazın; şube: <strong>${esc(siteLabel(site))}</strong>, departman: <strong>${esc(DEPT_LABEL[dept] || dept)}</strong>.</span></li>
       <li class="flex gap-2"><span class="font-bold text-primary">3.</span><span>“Yedeklemeyi Başlat”a basınca bilgisayar burada görünür.</span></li></ol>
+      <div class="mt-4"><button type="button" id="ac-setup-code" class="${UI.btnPrimary}">${icon("key", "text-[18px]")}<span>Kurulum kodu oluştur</span></button><div id="ac-setup-code-out" class="mt-2"></div></div>
       <div class="mt-4 p-3 rounded-lg bg-surface-container-low border border-outline-variant"><div class="font-label-md text-label-md font-bold text-on-surface mb-1">Yedek yöntem: kayıt kodu</div><p class="font-body-sm text-body-sm text-outline mb-2">Sihirbaz kullanılamıyorsa tek kullanımlık kod üretin (15 dakika geçerli).</p><button type="button" id="ac-token" class="${UI.btnSecondary}">Kayıt kodu oluştur</button><div id="ac-token-out" class="mt-2"></div></div>
       <div class="mt-5 flex justify-between"><button type="button" id="ac-back" class="${UI.btnSecondary}">Geri</button><button type="button" id="ac-next2" class="${UI.btnPrimary}">Bağlantıyı bekle</button></div>`;
     $("#ac-back", m.el).onclick = step1;
     $("#ac-next2", m.el).onclick = step3;
+    $("#ac-setup-code", m.el).onclick = async () => {
+      try {
+        const r = await post("/api/v1/admin/setup-codes", { label: "Yeni bilgisayar", site_id: site, hours: 168, max_uses: 10 });
+        $("#ac-setup-code-out", m.el).innerHTML = setupCodeShown(r);
+        bindCopy(m.el);
+      } catch (e) {
+        toast(e.message, "bad");
+      }
+    };
     $("#ac-token", m.el).onclick = async () => {
       try {
         const r = await post("/api/v1/admin/enrollment-tokens", { label: "panel", minutes: 15, site_id: site, department: dept });

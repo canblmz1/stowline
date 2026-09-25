@@ -131,8 +131,11 @@ class InstallIn(BaseModel):
     department: str
     custom_department: str = ""
     control_plane_url: str
-    username: str
-    password: str
+    # Either a setup code from the admin panel (preferred: the admin
+    # password never has to be typed on the computer) or the admin login.
+    setup_code: str = Field(default="", max_length=64)
+    username: str = ""
+    password: str = ""
     preferred_start_hhmm: str
     selected: list[dict] = Field(default_factory=list)
     confirm_install: bool = False
@@ -362,6 +365,44 @@ def _run_agent(cmd: list[str], *, timeout: float, step: str, **kwargs):
         raise HTTPException(504, f"{step} timed out after {timeout:.0f}s") from exc
 
 
+class CodeIn(BaseModel):
+    code: str = Field(max_length=64)
+
+
+@app.post("/api/local/check-code", dependencies=[LOCAL_API])
+def check_code(body: CodeIn):
+    """Checks a setup code against the server on the first screen, so a typo
+    shows up before the folders are scanned. Does not use the code up."""
+    url = (_deploy().get("control_plane_url") or "").rstrip("/")
+    if not url:
+        raise HTTPException(412, "connect to the server first")
+    try:
+        with httpx.Client(timeout=15.0, follow_redirects=False) as hx:
+            r = hx.post(url + "/api/v1/setup/code-check", json={"code": body.code})
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, f"could not reach control plane: {exc}") from exc
+    if r.status_code == 429:
+        raise HTTPException(429, "too many wrong codes; wait a few minutes")
+    if r.status_code != 200:
+        raise HTTPException(401, "setup code invalid or expired")
+    return r.json()
+
+
+def _cp_auth(hx, base: str, body: "InstallIn"):
+    """Signs in to the control plane with the setup code if one was given,
+    otherwise with the admin login. Same caller-owned client rule as
+    _cp_login."""
+    if body.setup_code.strip():
+        url = base.rstrip("/")
+        r = hx.post(url + "/api/v1/setup/login", json={"code": body.setup_code.strip()})
+        if r.status_code != 200:
+            raise HTTPException(401, "setup code invalid or expired")
+        return url, r.cookies
+    if not body.username or not body.password:
+        raise HTTPException(422, "a setup code or the admin login is required")
+    return _cp_login(hx, base, body.username, body.password)
+
+
 def _cp_login(hx, base: str, username: str, password: str):
     """`hx` must be a caller-owned, still-open httpx.Client. This function
     must never open or close it: doing so under a local `with` and then
@@ -494,7 +535,7 @@ def do_install(body: InstallIn):
         # One client, opened once, alive for every call below — see
         # _cp_login's docstring for why it must never be closed early.
         with httpx.Client(timeout=15.0, follow_redirects=True) as hx:
-            url, cookies = _cp_login(hx, effective_url, body.username, body.password)
+            url, cookies = _cp_auth(hx, effective_url, body)
             if already_enrolled_device_id and not _enrollment_still_valid(hx, url, cookies, already_enrolled_device_id, existing_cp_url):
                 # A leftover pilot.json from an earlier install -- another
                 # server (a previous one), or a device that has since

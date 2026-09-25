@@ -119,6 +119,9 @@ def upgrade(url: str) -> None:
         _ensure_column(conn, insp, "wan_admission_leases", "progress_bytes_done", "BIGINT")
         _ensure_column(conn, insp, "wan_admission_leases", "progress_total_bytes", "BIGINT")
         _ensure_column(conn, insp, "wan_admission_leases", "progress_updated_at", "TIMESTAMP")
+        _ensure_column(conn, insp, "admin_sessions", "setup_code_id", "VARCHAR(36) DEFAULT ''")
+        _ensure_column(conn, insp, "enrollment_tokens", "session_id", "VARCHAR(36) DEFAULT ''")
+        _ensure_column(conn, insp, "devices", "enrollment_token_id", "VARCHAR(36) DEFAULT ''")
         for table, column in BIGINT_COLUMNS:
             _ensure_bigint(conn, insp, table, column)
         # Repair rows written under the old meaning of acked_at. Every old
