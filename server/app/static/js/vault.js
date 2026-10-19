@@ -144,12 +144,30 @@ function recoveryGuide(dev, location) {
   const remote = available && location.storage_kind === "rclone";
   const cmds = [
     "# Yeni bilgisayarda, yönetici PowerShell:",
-    '$env:RESTIC_PASSWORD = "<kasadan gösterdiğiniz anahtar>"',
-    ...(remote ? [`rclone copy ${powershellLiteral(location.location)} C:\\Recovery\\repo-copy`] : []),
-    "stowline-recovery.exe copy --src C:\\Recovery\\repo-copy --dst D:\\independent\\repo-copy",
-    `stowline-recovery.exe verify --repo D:\\independent\\repo-copy --restic C:\\Stowline\\bin\\restic.exe --sha256 ${RESTIC_PIN}`,
-    `stowline-recovery.exe list-snapshots --repo D:\\independent\\repo-copy --restic C:\\Stowline\\bin\\restic.exe --sha256 ${RESTIC_PIN}`,
-    `stowline-recovery.exe restore-to-staging --repo D:\\independent\\repo-copy --restic C:\\Stowline\\bin\\restic.exe --sha256 ${RESTIC_PIN} --snapshot <snapshot-id> --staging D:\\Recovery\\staging\\case-1`,
+    "$ErrorActionPreference = 'Stop'",
+    "function Invoke-Required([scriptblock]$Action) {",
+    "  & $Action",
+    '  if ($LASTEXITCODE -ne 0) { throw "Recovery command failed: $LASTEXITCODE" }',
+    "}",
+    ...(remote ? [`Invoke-Required { rclone copy ${powershellLiteral(location.location)} C:\\Recovery\\repo-copy }`] : []),
+    "Invoke-Required { stowline-recovery.exe copy --src C:\\Recovery\\repo-copy --dst D:\\independent\\repo-copy }",
+    "$RecoveryKey = Read-Host 'Repository backup key' -AsSecureString",
+    "try {",
+    "  $env:RESTIC_PASSWORD = [System.Net.NetworkCredential]::new('', $RecoveryKey).Password",
+    `  Invoke-Required { stowline-recovery.exe verify --repo D:\\independent\\repo-copy --restic C:\\Stowline\\bin\\restic.exe --sha256 ${RESTIC_PIN} }`,
+    `  Invoke-Required { stowline-recovery.exe list-snapshots --repo D:\\independent\\repo-copy --restic C:\\Stowline\\bin\\restic.exe --sha256 ${RESTIC_PIN} }`,
+    "  $Snapshot = Read-Host 'Snapshot ID'",
+    "  Invoke-Required { & C:\\Stowline\\bin\\restic.exe --repo D:\\independent\\repo-copy ls $Snapshot }",
+    "  $SnapshotPath = Read-Host 'Folder path from the snapshot listing'",
+    "  if (-not $SnapshotPath.StartsWith('/')) { throw 'Select an absolute path inside the snapshot' }",
+    '  $Selector = "${Snapshot}:$SnapshotPath"',
+    "  # Example: --snapshot '<snapshot-id>:/<folder>'",
+    `  Invoke-Required { stowline-recovery.exe restore-to-staging --repo D:\\independent\\repo-copy --restic C:\\Stowline\\bin\\restic.exe --sha256 ${RESTIC_PIN} --snapshot $Selector --staging D:\\Recovery\\staging\\case-1 }`,
+    "  Get-ChildItem -LiteralPath D:\\Recovery\\staging\\case-1 -Recurse -File | Get-FileHash -Algorithm SHA256",
+    "} finally {",
+    "  Remove-Item Env:RESTIC_PASSWORD -ErrorAction SilentlyContinue",
+    "  $RecoveryKey.Dispose()",
+    "}",
   ].join("\n");
   const step = (n, title, body) => `<li class="flex gap-3"><span class="w-6 h-6 rounded-full bg-primary text-on-primary flex items-center justify-center font-label-md text-label-md shrink-0">${n}</span><div class="min-w-0 flex-1"><div class="font-label-md text-label-md font-bold text-on-surface">${title}</div><div class="mt-1 font-body-sm text-body-sm text-outline">${body}</div></div></li>`;
   return `<div class="${UI.card} p-5">
@@ -161,8 +179,8 @@ function recoveryGuide(dev, location) {
           ? "Yeni bilgisayarda aynı adlı rclone remote’unu erişim bilgilerinizle yapılandırın."
           : "Bu konum gateway dosya sistemindedir. Gateway üzerinde bağımsız bir kopya alın ve yeni bilgisayarda C:\\Recovery\\repo-copy konumuna taşıyın."}</p>`
         : `<p class="text-error">${esc(RECOVERY_LOCATION_ERRORS[location && location.reason] || RECOVERY_LOCATION_ERRORS.invalid_gateway_response)}</p><p class="mt-2">Konum doğrulanmadan kurtarma komutu oluşturulmaz.</p>`)}
-      ${available ? step(3, "Yeni bilgisayarda kurtarma aracını çalıştır", copyBlock(cmds)) : ""}
-      ${available ? step(4, "Dosyaları geri yükle", "Dosyalar yalnızca <strong>bekleme (staging)</strong> klasörüne yazılır; kontrol edip yerine kopyalayın.") : ""}
+      ${available ? step(3, "Yeni bilgisayarda kurtarma aracını çalıştır", `<p class="mb-2">Listeden snapshot kimliğini ve kurtarılacak klasörün yolunu seçin. Her denemede yeni bir staging klasörü kullanın. Windows üst klasör ACL’lerinin tam kurtarılması ayrıca doğrulanmalıdır.</p>${copyBlock(cmds)}`) : ""}
+      ${available ? step(4, "Dosyaları geri yükle", "Staging dosyalarını beklenen byte/içerik ve önceden kaydedilmiş SHA-256 özetleriyle karşılaştırın. Sonucu kaydedin; doğrulanan dosyaları yerine kopyalayın. Repository check işlemi, dosya içeriği karşılaştırmasının yerine geçmez.") : ""}
     </ol>
     <p class="mt-4 font-body-sm text-body-sm text-outline">Anahtarın <strong>çevrimdışı bir kopyasını</strong> (parola yöneticisi + kasadaki kâğıt) ayrıca saklayın; bu kasa yalnızca ek bir kopyadır.</p></div>`;
 }
