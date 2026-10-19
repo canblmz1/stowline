@@ -177,14 +177,16 @@ def test_a_canary_computer_gets_the_canary_build_and_others_keep_the_pin(client,
     exe = tmp_path / "stowline-agent-canary.exe"
     exe.write_bytes(b"canary build")
     sha = hashlib.sha256(exe.read_bytes()).hexdigest()
-    monkeypatch.setattr(services, "agent_pin", lambda: ("b" * 64, True))
+    monkeypatch.setattr(services, "agent_pin", lambda: ("b" * 64, False))
     monkeypatch.setattr(services, "canary_pin", lambda device_id: (sha, exe) if device_id == canary["device_id"] else None)
 
     def hb(d):
         return client.post("/api/v1/agent/heartbeat", json={"sequence": 1}, headers={"Authorization": f"Bearer {d['control_credential']}"}).json()
 
-    assert (hb(canary)["agent_sha256"], hb(canary)["agent_qualified"]) == (sha, True)
+    assert (hb(canary)["agent_sha256"], hb(canary)["agent_qualified"], hb(canary)["agent_canary_allowed"]) == (sha, False, True)
     assert hb(other)["agent_sha256"] == "b" * 64
+    assert hb(other)["agent_qualified"] is False
+    assert hb(other)["agent_canary_allowed"] is False
     got = client.get("/api/v1/agent/binary", headers={"Authorization": f"Bearer {canary['control_credential']}"})
     assert got.status_code == 200 and got.content == b"canary build"
 

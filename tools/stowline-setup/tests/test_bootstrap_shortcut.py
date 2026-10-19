@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import pytest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -141,3 +142,19 @@ def test_user_app_shortcut_prefers_the_installed_yedeklerim_exe(tmp_path, monkey
 def test_wizard_args_forward_the_desktop_installer_options():
     assert b.wizard_passthrough(["--no-browser", "--port", "18999", "--verify-only"]) == ["--no-browser", "--port", "18999"]
     assert b.wizard_passthrough([]) == []
+
+
+def test_fresh_bootstrap_preserves_existing_identity_keys_repository_and_history(tmp_path, monkeypatch):
+    installed = tmp_path / "Stowline"
+    monkeypatch.setattr(b, "PILOT", installed)
+    files = {"config/pilot.json": b'{"device_id":"existing"}', "secrets/key": b"synthetic-key", "state/history.db": b"history", "Repos/config": b"repo"}
+    for name, content in files.items():
+        path = installed / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+    calls = []
+    monkeypatch.setattr(b.subprocess, "run", lambda *a, **k: calls.append(a))
+    with pytest.raises(SystemExit, match="existing installation preserved"):
+        b.layout(tmp_path / "new-package")
+    assert calls == []
+    assert {name: (installed / name).read_bytes() for name in files} == files

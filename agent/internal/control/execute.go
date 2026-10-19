@@ -27,13 +27,14 @@ type Executor struct {
 	ApplySelection func(ctx context.Context, revisionID string, sourceRoots, sensitiveConsents []string) (map[string]any, error)
 	Cancel         func()
 	OnPolicy       func(domain.LocalPolicy)
-	// OnAgentPin receives the control plane's current agent_sha256/agent_qualified
+	// OnAgentPin receives the control plane's current pin, qualification, and
+	// separate device-specific permission to test an unqualified canary.
 	// on every successful heartbeat (see Phase 2,
 	// docs/superpowers/specs/2026-09-22-ops-and-desktop-plan.md). Whether
 	// that differs from the binary actually running, and whether to act on
 	// it, is entirely the callback's decision -- Poll only forwards what
 	// the server said.
-	OnAgentPin func(sha256 string, qualified bool)
+	OnAgentPin func(sha256 string, qualified, canaryAllowed bool)
 	// AgentSHA256 is this running binary's own hash, sent with every
 	// heartbeat so the admin panel shows which build each PC actually runs
 	// -- the only way to see an automatic upgrade (or its rollback) land.
@@ -243,7 +244,7 @@ func (e *Executor) Poll(ctx context.Context, currentOp string) error {
 		}
 		e.PolicyInvalid = false
 		if e.OnAgentPin != nil {
-			e.OnAgentPin(hb.AgentSHA256, hb.AgentQualified)
+			e.OnAgentPin(hb.AgentSHA256, hb.AgentQualified, hb.AgentCanaryAllowed)
 		}
 	}
 	cmd, err := e.Client.Claim(ctx)

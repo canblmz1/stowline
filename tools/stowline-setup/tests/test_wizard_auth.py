@@ -349,12 +349,12 @@ def _install_fixture(monkeypatch, tmp_path, token="tok"):
     monkeypatch.setattr(w, "_is_admin", lambda: True)
     # do_install() needs AGENT.is_file() == True to reach the enroll/
     # repo-init/provision/service-install sequence at all (it 404s
-    # otherwise) -- so this must be a real file, with QUALIFIED patched to
-    # match its actual hash rather than the real qualified agent's.
+    # otherwise) -- so this must be a real file, with the package pin patched
+    # to match its actual hash rather than a real release agent's.
     fake_agent = tmp_path / "fake-stowline-agent.exe"
     fake_agent.write_bytes(b"not a real agent binary, just a test fixture")
     monkeypatch.setattr(w, "AGENT", fake_agent)
-    monkeypatch.setattr(w, "QUALIFIED", hashlib.sha256(fake_agent.read_bytes()).hexdigest())
+    monkeypatch.setattr(w, "PACKAGED_AGENT_SHA", hashlib.sha256(fake_agent.read_bytes()).hexdigest())
     pilot_json = tmp_path / "pilot.json"
     pilot_json.write_text("{}", encoding="utf-8")
     monkeypatch.setattr(w, "PILOT_JSON", pilot_json)
@@ -749,7 +749,7 @@ def _enroll_calls(calls):
     return [c for c in calls if len(c) >= 3 and c[1] == "control" and c[2] == "enroll"]
 
 
-def test_a_leftover_pilot_json_from_another_server_is_never_reused(monkeypatch, tmp_path):
+def test_a_leftover_pilot_json_from_another_server_is_never_silently_replaced(monkeypatch, tmp_path):
     """The 6 PCs being reinstalled still carry their old Railway pilot.json.
     Reusing that device_id would skip enrollment against the new server and
     leave the PC unable to back up."""
@@ -761,8 +761,8 @@ def test_a_leftover_pilot_json_from_another_server_is_never_reused(monkeypatch, 
     calls = _mock_subprocess(monkeypatch)
     with TestClient(w.app) as c:
         r = c.post("/api/local/install", json=body, headers={"X-Wizard-Token": "tok"})
-    assert r.status_code == 200, r.text
-    assert len(_enroll_calls(calls)) == 1, "must enroll fresh against the new server"
+    assert r.status_code == 409, r.text
+    assert _enroll_calls(calls) == [], "an update must not silently replace an existing enrollment"
 
 
 def test_a_leftover_quarantined_device_on_this_server_is_never_reused(monkeypatch, tmp_path):
@@ -774,8 +774,8 @@ def test_a_leftover_quarantined_device_on_this_server_is_never_reused(monkeypatc
     calls = _mock_subprocess(monkeypatch)
     with TestClient(w.app) as c:
         r = c.post("/api/local/install", json=body, headers={"X-Wizard-Token": "tok"})
-    assert r.status_code == 200, r.text
-    assert len(_enroll_calls(calls)) == 1
+    assert r.status_code == 409, r.text
+    assert _enroll_calls(calls) == []
 
 
 def test_a_retry_on_the_same_server_reuses_the_active_enrollment(monkeypatch, tmp_path):

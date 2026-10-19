@@ -66,7 +66,7 @@ def _pinned_agent_sha() -> str:
     return ""
 
 
-QUALIFIED = _pinned_agent_sha()
+PACKAGED_AGENT_SHA = _pinned_agent_sha()
 # Since bootstrap.py started launching this wizard as a DETACHED_PROCESS
 # (no console of its own), every console-subsystem child it spawns via
 # subprocess.run below -- stowline-agent.exe, workspace-repo-init.exe -- has
@@ -224,8 +224,8 @@ def set_server(body: ServerIn):
 def identity():
     info = collect_device_identity(str(AGENT))
     info["elevated"] = _is_admin()
-    info["qualified_agent_sha"] = QUALIFIED
-    info["sha_match"] = bool(info.get("agent_sha256") and info["agent_sha256"] == QUALIFIED)
+    info["packaged_agent_sha"] = PACKAGED_AGENT_SHA
+    info["sha_match"] = bool(info.get("agent_sha256") and info["agent_sha256"] == PACKAGED_AGENT_SHA)
     info["synthetic"] = bool(STATE["synthetic"])
     info["no_enroll"] = bool(STATE["no_enroll"])
     dep = _deploy()
@@ -429,8 +429,8 @@ def do_install(body: InstallIn):
             for chunk in iter(lambda: fh.read(1024 * 1024), b""):
                 h.update(chunk)
         sha = h.hexdigest()
-        if sha != QUALIFIED:
-            raise HTTPException(409, "installed agent hash is not the qualified 0.2.4 binary")
+        if sha != PACKAGED_AGENT_SHA:
+            raise HTTPException(409, "installed agent hash does not match this installer package pin")
     disc = STATE.get("discovery") or {}
     try:
         dept = normalize_department(body.department, body.custom_department)
@@ -537,12 +537,9 @@ def do_install(body: InstallIn):
         with httpx.Client(timeout=15.0, follow_redirects=True) as hx:
             url, cookies = _cp_auth(hx, effective_url, body)
             if already_enrolled_device_id and not _enrollment_still_valid(hx, url, cookies, already_enrolled_device_id, existing_cp_url):
-                # A leftover pilot.json from an earlier install -- another
-                # server (a previous one), or a device that has since
-                # been revoked/quarantined. Reusing it would skip enrolling
-                # against this server and leave the PC unable to back up,
-                # so enroll fresh; `control enroll` rewrites the identity.
-                already_enrolled_device_id = ""
+                # A failed lookup may be an outage or an intentional revoke.
+                # Neither permits a repair/update to replace this identity.
+                raise HTTPException(409, "existing enrollment could not be verified on this server; repair access or explicitly remove and enroll as a new device")
             if already_enrolled_device_id:
                 # This PC's own pilot.json already carries a real (non-
                 # placeholder) device_id from a prior successful `control

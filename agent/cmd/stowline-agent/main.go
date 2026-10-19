@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/canblmz1/stowline/agent/internal/adapters/journal"
@@ -394,11 +393,7 @@ func cmdService(op string) error {
 		// the whole service lifetime, explicitly reset at the start of each
 		// run and cleared when one ends.
 		sharedProgress := &liveBackupProgress{}
-		// busy counts backups and restores in flight. An automatic upgrade
-		// restarts the service, so it never starts while this is non-zero
-		// and, once staged, waits for it to drop to zero before restarting.
-		var busy atomic.Int32
-		var upgradeRestartPending atomic.Bool
+		var activity upgradeGate
 		ctrl := &scheduler.Controller{
 			DeviceID:         cfg.DeviceID,
 			InstallationID:   cfg.InstallationID,
@@ -415,8 +410,10 @@ func cmdService(op string) error {
 		}
 		var exec *ctrlclient.Executor
 		ctrl.Backup = func(ctx context.Context, slot string) error {
-			busy.Add(1)
-			defer busy.Add(-1)
+			if err := activity.beginOperation(); err != nil {
+				return err
+			}
+			defer activity.endOperation()
 			cur := live.get()
 			last, _ := svcApp.Journal.LatestSucceededBackupSlot(ctx)
 			class := wanClass(last)
@@ -541,8 +538,10 @@ func cmdService(op string) error {
 		// bandwidth limit as an admin-initiated one instead of bypassing
 		// them. Returns where the files landed (always the staging root).
 		restoreWithAdmission := func(ctx context.Context, jobID, snapshot string, selections []string, progress func(domain.RestoreProgress)) (string, error) {
-			busy.Add(1)
-			defer busy.Add(-1)
+			if err := activity.beginOperation(); err != nil {
+				return "", err
+			}
+			defer activity.endOperation()
 			cur := live.get()
 			download := cur.RestoreDownloadKiBps
 			if download == 0 {
@@ -635,7 +634,7 @@ func cmdService(op string) error {
 					return applySelection(ctx, revisionID, sourceRoots, sensitiveConsents, filepath.Join(cfg.PilotRoot, "config", "pilot.json"))
 				},
 				BuildCatalog: buildCatalogFunc(eng, ctrlClient, cfg.Repository, cfg.PasswordRef),
-				OnAgentPin: func(wantSHA256 string, qualified bool) {
+				OnAgentPin: func(wantSHA256 string, qualified, canaryAllowed bool) {
 					exePath, err := os.Executable()
 					if err != nil {
 						return
@@ -644,16 +643,22 @@ func cmdService(op string) error {
 					// exactly the proof a just-installed build needs to stop the
 					// boot-loop guard from rolling it back.
 					confirmUpgradeHealthy(exePath)
-					if busy.Load() > 0 || upgradeRestartPending.Load() {
+					if !activity.beginUpgrade() {
 						return // try again on a later heartbeat, never mid-backup/restore
 					}
+					staged := false
+					defer func() {
+						if !staged {
+							activity.cancelUpgrade()
+						}
+					}()
 					currentSHA, err := hashFile(exePath)
 					if err != nil {
 						return
 					}
 					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 					defer cancel()
-					rollback, err := runAgentUpgrade(ctx, ctrlClient, eng.Runner, exePath, currentSHA, wantSHA256, qualified)
+					rollback, err := runAgentUpgrade(ctx, ctrlClient, eng.Runner, exePath, currentSHA, wantSHA256, qualified || canaryAllowed)
 					if err != nil {
 						fmt.Fprintf(os.Stderr, "agent upgrade attempt failed: %s\n", domain.Redact(err.Error()))
 						return
@@ -675,15 +680,8 @@ func cmdService(op string) error {
 						return
 					}
 					fmt.Fprintf(os.Stderr, "agent upgrade staged, restarting to apply (rollback kept at %s)\n", filepath.Base(rollback))
-					upgradeRestartPending.Store(true)
-					// A backup or restore may have started while the new
-					// build downloaded; let it finish before restarting.
-					go func() {
-						for busy.Load() > 0 {
-							time.Sleep(10 * time.Second)
-						}
-						os.Exit(1)
-					}()
+					staged = true
+					go func() { os.Exit(1) }()
 				},
 			}
 			// Best-effort, idempotent: makes sure this service is configured to
@@ -738,6 +736,10 @@ func cmdService(op string) error {
 			},
 			InspectACL: qualification.RequireAdminSystemACL,
 			Backup: func(ctx context.Context, req domain.BackupRequest) (domain.BackupResult, error) {
+				if err := activity.beginOperation(); err != nil {
+					return domain.BackupResult{}, err
+				}
+				defer activity.endOperation()
 				req.Deadline = time.Now().Add(cfgDeadline())
 				return svcApp.Backup(ctx, req)
 			},

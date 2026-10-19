@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 
 _FALLBACK_VERSION = "0.1.1"
@@ -63,8 +64,10 @@ def agent_pin() -> tuple[str, bool]:
     upgrade check) and the binary-download endpoint (which must refuse to
     serve an unqualified build)."""
     data = _manifest()
-    sha = str(data.get("agent_sha256") or "")
-    qualified = bool(data.get("agent_qualified"))
+    sha = str(data.get("agent_sha256") or "").lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", sha):
+        return "", False
+    qualified = data.get("agent_qualified") is True
     return sha, qualified
 
 
@@ -76,7 +79,7 @@ def canary_pin(device_id: str) -> tuple[str, Path] | None:
     c = _manifest().get("canary") or {}
     sha = str(c.get("agent_sha256") or "").lower()
     ids = [str(x) for x in (c.get("device_ids") or [])]
-    if len(sha) != 64 or not device_id or device_id not in ids:
+    if not re.fullmatch(r"[0-9a-f]{64}", sha) or not device_id or device_id not in ids:
         return None
     for d in _release_dirs():
         path = d / "bin" / "stowline-agent-canary.exe"

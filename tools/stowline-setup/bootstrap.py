@@ -149,6 +149,8 @@ def create_user_app_shortcuts() -> None:
 
 
 def layout(root: Path) -> None:
+    if PILOT.exists():
+        raise SystemExit("ABORT: existing installation preserved; use docs/RELEASE-UPDATES.md to update without replacing enrollment")
     pins = load_pins(root)
     names = ("stowline-agent.exe", "restic.exe", "rclone.exe", "workspace-repo-init.exe")
     for name in names:

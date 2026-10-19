@@ -125,7 +125,7 @@ func TestHeartbeatAppliesPolicy(t *testing.T) {
 			applied.Add(1)
 			last = p.BandwidthKiBps
 		},
-		OnAgentPin: func(sha256 string, qualified bool) {
+		OnAgentPin: func(sha256 string, qualified, canaryAllowed bool) {
 			gotSHA, gotQualified = sha256, qualified
 		},
 	}
@@ -189,5 +189,33 @@ func TestRefreshPolicyFetchesAndApplies(t *testing.T) {
 	}
 	if e.PolicyRev != "rev-rf" {
 		t.Fatalf("revision=%s", e.PolicyRev)
+	}
+}
+
+func TestHeartbeatKeepsUnqualifiedCanaryPermissionSeparate(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/v1/agent/heartbeat" {
+			_, _ = w.Write([]byte(`{"schema_version":1,"agent_sha256":"candidate","agent_qualified":false,"agent_canary_allowed":true}`))
+		} else {
+			_, _ = w.Write([]byte(`{"schema_version":1,"command":null}`))
+		}
+	}))
+	defer srv.Close()
+	called := false
+	e := &Executor{
+		Client: &Client{BaseURL: srv.URL, Credential: "synthetic"},
+		OnAgentPin: func(sha string, qualified, canaryAllowed bool) {
+			called = true
+			if sha != "candidate" || qualified || !canaryAllowed {
+				t.Fatalf("canary permission must not be reported as qualification: %q %v %v", sha, qualified, canaryAllowed)
+			}
+		},
+	}
+	if err := e.Poll(context.Background(), "none"); err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("heartbeat must forward the explicit canary permission")
 	}
 }

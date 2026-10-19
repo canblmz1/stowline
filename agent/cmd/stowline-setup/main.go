@@ -3,7 +3,7 @@
 // Stowline Setup is the one file a technician double-clicks: it asks for
 // administrator rights (manifest), unpacks the installer package it
 // carries (single-file build) or uses the package folder next to it,
-// removes an earlier Stowline install that belongs to another server, starts
+// preserves every existing installation and starts
 // the packaged setup (embedded Python running wizard\bootstrap.py -- the
 // same path Setup.cmd uses) hidden, and shows the Turkish setup wizard in
 // its own window. Closing the window stops the setup processes with it.
@@ -19,7 +19,6 @@ package main
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -39,10 +38,9 @@ import (
 )
 
 const (
-	windowTitle  = "Stowline Setup"
-	pilotRoot    = `C:\Stowline`
-	serviceName  = "StowlineBackup"
-	powershellEx = `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`
+	windowTitle = "Stowline Setup"
+	pilotRoot   = `C:\Stowline`
+	serviceName = "StowlineBackup"
 )
 
 var (
@@ -68,13 +66,7 @@ func main() {
 		}
 		return p, err
 	})
-	reinstall := make(chan bool, 1)
-	_ = w.Bind("stowlineReinstall", func(yes bool) {
-		select {
-		case reinstall <- yes:
-		default:
-		}
-	})
+	_ = w.Bind("stowlineCloseSetup", func() { w.Dispatch(w.Terminate) })
 	logPath := filepath.Join(os.TempDir(), "stowline-setup.log")
 	_ = os.WriteFile(logPath, nil, 0o600) // one log per run: cleanup + setup append to it
 	show := func(html string) { w.Dispatch(func() { w.SetHtml(html) }) }
@@ -89,28 +81,9 @@ func main() {
 			fail(desktop.T("Kurulum dosyaları açılamadı", "Could not unpack the setup files"), err.Error())
 			return
 		}
-		old := detectOldInstall()
-		switch {
-		case desktop.NeedsCleanup(old, packagedControlURL(root)):
-			show(desktop.WaitingPage(desktop.T("Eski Stowline kurulumu kaldırılıyor", "Removing the old Stowline install"), desktop.T("Bu bilgisayarda eski bir Stowline kurulumu bulundu. Kaldırılıp yerine yenisi kurulacak; eski ayarlar silinir. Bu bir-iki dakika sürebilir.", "An old Stowline install was found on this computer. It will be removed and replaced; old settings are deleted. This can take a minute or two.")))
-			if err := removeOldInstall(root, logPath); err != nil {
-				fail(desktop.T("Eski kurulum kaldırılamadı", "Could not remove the old install"), err.Error())
-				return
-			}
-		case old.PilotRootExists || old.ServiceExists:
-			// Already installed against this server. Setup over a running
-			// install cannot work (the service locks its exe and its
-			// registration already exists), so ask instead of failing.
+		if desktop.BlocksFreshInstall(detectOldInstall()) {
 			show(alreadyInstalledPage())
-			if !<-reinstall {
-				w.Dispatch(w.Terminate)
-				return
-			}
-			show(desktop.WaitingPage(desktop.T("Stowline kaldırılıyor", "Removing Stowline"), desktop.T("Mevcut kurulum kaldırılıyor; ardından yeniden kurulacak. Bu bir-iki dakika sürebilir.", "Removing the current install; it is then installed again. This can take a minute or two.")))
-			if err := removeOldInstall(root, logPath); err != nil {
-				fail(desktop.T("Mevcut kurulum kaldırılamadı", "Could not remove the current install"), err.Error())
-				return
-			}
+			return
 		}
 		show(desktop.WaitingPage(desktop.T("Kurulum hazırlanıyor", "Preparing setup"), desktop.T("Kurulum dosyaları doğrulanıyor ve bilgisayara kopyalanıyor. Bu bir dakika kadar sürebilir.", "Verifying the setup files and copying them to this computer. This can take about a minute.")))
 		runWizard(w, root, logPath, fail)
@@ -123,8 +96,8 @@ func main() {
 	jobMu.Unlock()
 }
 
-// alreadyInstalledPage is shown when Stowline is already installed and
-// enrolled against this package's server on this PC.
+// alreadyInstalledPage preserves any existing installation, including an
+// unreadable one whose identity and recovery material must not be discarded.
 func alreadyInstalledPage() string {
 	return `<!doctype html><html lang="` + desktop.T("tr", "en") + `"><head><meta charset="utf-8"><style>
 :root{color-scheme:light dark;--p:#f5f7fc;--c:#fff;--i:#111c2d;--m:#6b7285;--b:#004fda;--l:#dfe5f2;--g:#0f7b4a;--gs:#e3f4ea}
@@ -135,8 +108,8 @@ html,body{height:100%;margin:0}body{background:var(--p);color:var(--i);font:14px
 button{font:600 14px "Segoe UI",system-ui,sans-serif;border-radius:8px;padding:10px 18px;border:1px solid var(--l);background:var(--c);color:var(--i);cursor:pointer;margin:0 4px}
 button.p{background:var(--b);border-color:var(--b);color:#fff}</style></head><body><div class="c"><div class="o">&#10003;</div>
 <h1>` + desktop.T("Stowline bu bilgisayarda zaten kurulu", "Stowline is already installed on this computer") + `</h1>
-<p>` + desktop.T("Yedekleme çalışıyor; bir şey yapmanız gerekmez. Yedeklenen klasörleri değiştirmek için masaüstündeki <b>Stowline Backups</b>'i ya da yönetim panelini kullanın.<br><br><b>Sıfırdan yeniden kur</b> seçilirse bu bilgisayar yeni bir kayıtla kurulur; eski yedekleri panelde eski kaydın altında kalır.", "Backups are running; there is nothing to do. To change the backed-up folders use <b>Stowline Backups</b> on the desktop or the admin panel.<br><br>With <b>Reinstall from scratch</b> this computer is installed as a new enrollment; its old backups stay under the old record in the panel.") + `</p>
-<button onclick="window.stowlineReinstall(false)">` + desktop.T("Kapat", "Close") + `</button><button class="p" onclick="this.disabled=true;window.stowlineReinstall(true)">` + desktop.T("Sıfırdan yeniden kur", "Reinstall from scratch") + `</button>
+<p>` + desktop.T("Mevcut kurulum korundu. Bu kurucu güncelleme veya cihazı sıfırlama yapmaz. Cihaz kaydını koruyan güncelleme için docs/RELEASE-UPDATES.md adımlarını izleyin.", "The existing installation was preserved. This installer does not update or reset a device. Follow docs/RELEASE-UPDATES.md to update while preserving enrollment.") + `</p>
+<button onclick="window.stowlineCloseSetup()">` + desktop.T("Kapat", "Close") + `</button>
 </div></body></html>`
 }
 
@@ -167,21 +140,6 @@ func packageRoot() (string, error) {
 	return root, nil
 }
 
-func packagedControlURL(root string) string {
-	raw, err := os.ReadFile(filepath.Join(root, "deploy.json"))
-	if err != nil {
-		return ""
-	}
-	var d struct {
-		ControlPlaneURL string `json:"control_plane_url"`
-	}
-	if len(raw) >= 3 && raw[0] == 0xEF && raw[1] == 0xBB && raw[2] == 0xBF {
-		raw = raw[3:]
-	}
-	_ = json.Unmarshal(raw, &d)
-	return d.ControlPlaneURL
-}
-
 func detectOldInstall() desktop.OldInstall {
 	var o desktop.OldInstall
 	if _, err := os.Stat(pilotRoot); err == nil {
@@ -198,39 +156,6 @@ func detectOldInstall() desktop.OldInstall {
 		m.Disconnect()
 	}
 	return o
-}
-
-// removeOldInstall runs the package's own remove_stowline.ps1 (the script
-// behind Remove.cmd: stops and deletes the StowlineBackup service, removes
-// C:\Stowline) and checks that nothing is left.
-func removeOldInstall(root, logPath string) error {
-	script := filepath.Join(root, "payload", "wizard", "remove_stowline.ps1")
-	if _, err := os.Stat(script); err != nil {
-		return fmt.Errorf(desktop.T("kaldırma betiği pakette yok: %s", "the removal script is missing from the package: %s"), script)
-	}
-	logf, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
-	if err != nil {
-		return err
-	}
-	defer logf.Close()
-	proc, err := os.StartProcess(powershellEx, []string{powershellEx, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script}, &os.ProcAttr{
-		Dir:   root,
-		Env:   os.Environ(),
-		Files: []*os.File{nil, logf, logf},
-		Sys:   &syscall.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NO_WINDOW},
-	})
-	if err != nil {
-		return err
-	}
-	st, err := proc.Wait()
-	if err != nil {
-		return err
-	}
-	left := detectOldInstall()
-	if st.ExitCode() != 0 || left.ServiceExists || left.PilotRootExists {
-		return fmt.Errorf(desktop.T("eski kurulum tamamen kaldırılamadı (çıkış kodu %d)", "the old install could not be removed completely (exit code %d)"), st.ExitCode())
-	}
-	return nil
 }
 
 func runWizard(w interface {

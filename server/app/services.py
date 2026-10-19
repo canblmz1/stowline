@@ -860,7 +860,7 @@ def heartbeat(db: Session, device: Device, inst: Installation, body: dict) -> di
     provider_down = bool(site and site.provider_unavailable_until and as_utc(site.provider_unavailable_until) > now())
     compiled = overlay.get("bandwidth") or {}
     canary = canary_pin(device.id)
-    agent_sha256, agent_qualified = (canary[0], True) if canary else agent_pin()
+    agent_sha256, agent_qualified = (canary[0], False) if canary else agent_pin()
     return {
         "schema_version": 1,
         "server_time": now().isoformat(),
@@ -873,6 +873,7 @@ def heartbeat(db: Session, device: Device, inst: Installation, body: dict) -> di
         "site_id": device.site_id or "",
         "agent_sha256": agent_sha256,
         "agent_qualified": agent_qualified,
+        "agent_canary_allowed": canary is not None,
     }
 
 
