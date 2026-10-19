@@ -101,6 +101,12 @@ def find_pinned(bin_dir: str, name: str, expected: str) -> Path:
     raise SystemExit(f"{name} not found: run scripts/fetch-pinned-binaries.ps1 and pass --bin-dir")
 
 
+def verify_release_agent(build: Path, manifest: dict) -> None:
+    expected = manifest.get("agent_sha256") or ""
+    if len(expected) != 64 or sha256(build / "stowline-agent.exe") != expected:
+        raise SystemExit("build agent does not match release/manifest.json; stage this version with scripts/pin-release.py first")
+
+
 def write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8", newline="\r\n" if path.suffix.lower() in {".txt", ".cmd"} else "\n")
@@ -175,6 +181,7 @@ def main() -> None:
     gateway = (args.gateway or (server + "/gw" if server else "")).rstrip("/")
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
     build = find_build(args.build)
+    verify_release_agent(build, manifest)
     restic = find_pinned(args.bin_dir, "restic.exe", manifest["restic_sha256"])
     rclone = find_pinned(args.bin_dir, "rclone.exe", manifest["rclone_sha256"])
 
