@@ -20,6 +20,7 @@ jobs:
       - name: Vet and test
         run: |
           go vet ./...
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           go test ./...
       - name: Race (agent internals)
         run: go test -race ./agent/internal/...
@@ -33,8 +34,11 @@ jobs:
       - name: Server and gateway tests
         run: |
           python -m pip install -e .\server[dev] -e .\gateway[dev]
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           python -m pytest .\server\tests -q
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           python -m pytest .\gateway\tests -q
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           python -m pytest .\tools\stowline-setup\tests -q
   release-integrity:
     runs-on: windows-latest
@@ -45,3 +49,33 @@ jobs:
           python-version: "3.12"
       - name: UI language layer is rebuilt from i18n/
         run: python scripts/build-i18n.py --check
+      - name: Release artifact and qualification regressions
+        run: |
+          python -m pip install pytest
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python -m pytest scripts/tests -q
+  real-engines:
+    runs-on: windows-latest
+    env:
+      STOWLINE_REQUIRE_REAL_ENGINES: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.5"
+      - name: Install pinned restic and rclone and verify integrity
+        shell: pwsh
+        run: |
+          ./scripts/fetch-pinned-binaries.ps1
+          (Resolve-Path releases/_cache).Path | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Gateway and real backend regressions
+        run: |
+          python -m pip install -e .\gateway[dev]
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python -m pytest .\gateway\tests -q
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Recovery without the original endpoint
+        run: go test ./recovery/cmd/stowline-recovery -run TestIndependentRecoveryWithRealEngines -count=1 -v
