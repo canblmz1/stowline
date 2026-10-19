@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from html import unescape
 from pathlib import Path
 import re
@@ -81,7 +82,7 @@ def test_backup_key_is_prompted_securely_and_environment_is_cleared_in_finally()
 
 
 @pytest.mark.skipif(shutil.which("powershell") is None, reason="Windows PowerShell is required for generated command execution")
-def test_generated_powershell_clears_password_when_repository_check_fails(tmp_path):
+def test_generated_powershell_clears_password_when_repository_check_fails(tmp_path, monkeypatch):
     html = render({"available": True, "storage_kind": "rclone", "location": "archive:recorded/path/generation"})
     commands = re.search(r"<pre data-no-i18n[^>]*>(.*?)</pre>", html, re.S).group(1)
     # Synthetic command doubles fail at verify, before any real restic runs.
@@ -109,5 +110,10 @@ if (Test-Path Env:RESTIC_PASSWORD) { throw 'Backup password remained in environm
 """
     path = tmp_path / "generated-recovery-check.ps1"
     path.write_text(script, encoding="utf-8-sig")
-    result = subprocess.run([shutil.which("powershell"), "-NoProfile", "-NonInteractive", "-File", str(path)], capture_output=True, encoding="utf-8", errors="replace")
+    # A pwsh CI parent exports its .NET Core module directories. Windows
+    # PowerShell 5.1 must discover its own modules instead of importing those.
+    monkeypatch.setenv("PSModulePath", str(tmp_path / "foreign-shell-modules"))
+    env = os.environ.copy()
+    env.pop("PSModulePath", None)
+    result = subprocess.run([shutil.which("powershell"), "-NoProfile", "-NonInteractive", "-File", str(path)], capture_output=True, encoding="utf-8", errors="replace", env=env)
     assert result.returncode == 0, result.stdout + result.stderr
