@@ -109,7 +109,7 @@ def test_rclone_calls_carry_generous_retry_and_backoff_flags(monkeypatch: pytest
 
     class _Completed:
         returncode = 0
-        stdout = b"[]"
+        stdout = b"null"
         stderr = b""
 
     def fake_run(cmd, **kwargs):

@@ -25,6 +25,28 @@ recommended (it encrypts `rclone.conf`); you then pass it as
 Repositories go under the path you choose, e.g. `mydrive:stowline-repositories`;
 each computer gets `<department>/<hostname>--<id>/...` inside it.
 
+Run **one gateway instance with one worker per repository root**, as in the
+provided Compose/systemd deployments. All writes to that root must go through
+that gateway. RcloneStore serializes each object's metadata check, upload and
+byte verification with a host-local OS file lock, including competing Python
+processes that share the same `STOWLINE_GATEWAY_LOCK_DIR` and identical remote
+root. Compose uses `/data/write-locks`; systemd uses
+`/opt/stowline/var/gateway/write-locks`. Keep this directory writable and do not
+delete its files while the gateway is running. The rclone subprocess ceiling
+is per process, and the registry is intended for the single worker model.
+
+Independent gateway hosts/containers, different lock directories or aliases
+of the same remote, and external writers are **not supported concurrent
+writers**. These locks are not distributed locks. Rclone `--ignore-existing`
+can report success without creating a file and does not provide an atomic
+create guarantee across writers. The gateway verifies the stored bytes before
+reporting a new write successful; uncertain metadata/transport/auth/JSON errors
+stop a write with an error instead of being treated as an empty repository.
+This does not add storage-level immutability or protect against an administrator
+with the storage credentials. See the pinned rclone
+[stat implementation](https://github.com/rclone/rclone/blob/v1.75.0/fs/operations/lsjson.go)
+and [exit codes](https://rclone.org/docs/#list-of-exit-codes).
+
 ## 2. Sites and departments
 
 Copy `deployments/sites.example.json` and edit it: one entry per location

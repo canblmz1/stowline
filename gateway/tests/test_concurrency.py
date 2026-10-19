@@ -49,7 +49,7 @@ def _slow_run_factory(delay_sec: float, calls: list):
 
     class _Completed:
         returncode = 0
-        stdout = b"[]"
+        stdout = b"null"
         stderr = b""
 
     def fake_run(cmd, **kwargs):
