@@ -52,14 +52,21 @@ This is file backup, not a disk image or bare-metal recovery procedure.
    the retained key, recorded repository source and storage access. Verify all
    test files again. Do not enroll the recovery workstation to perform this.
 4. **Update while preserving enrollment.** Reconnect the test computer. Follow
-   [Agent updates](DEPLOYMENT.md#6-agent-updates), initially selecting one
-   canary device ID. Before and after, compare device ID, repository/generation,
-   key fingerprint and existing snapshot history. Verify a new backup and a
-   restore of an old snapshot; the device count must not increase. Verify that
-   a busy backup and a busy restore defer restart, and that a failed candidate
-   health check rolls back. Then include the other selected test devices. Keep
-   these results separate from automated tests; do not mark `agent_qualified`
-   successful until the required real Windows qualification passes.
+   [the release/update procedure](RELEASE-UPDATES.md), initially selecting one
+   test device. A public 0.1.1 agent needs the documented one-time manual
+   binary bootstrap during an operator-controlled maintenance window before
+   it understands the separate canary permission. Do not uninstall, re-enroll
+   or mark an untested build qualified to make that first transition happen.
+   Then select that device ID for an automatic canary update. Before and after
+   each transition, compare device ID, repository/generation, key fingerprint
+   and existing snapshot history. Verify a new backup and a restore of an old
+   snapshot; the device count must not increase. For automatic updates, verify
+   separately that a busy backup and a busy restore defer restart, failed
+   self-check rejects the candidate, and repeated unconfirmed starts trigger
+   the documented boot-loop rollback. The first manual bootstrap uses manual
+   rollback. Then include the other selected test devices. Keep these results
+   separate from automated tests; do not mark `agent_qualified` successful
+   until the required real Windows qualification passes.
 5. **Change labels.** Rename one device's panel label/department and confirm
    that its recorded storage source and generation still locate the old
    snapshots. No repository move is part of this pilot.
