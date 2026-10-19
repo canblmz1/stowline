@@ -98,7 +98,7 @@ function keyStatusPill(v) {
 }
 
 function copyBlock(text) {
-  return `<div class="relative"><pre class="p-3 rounded-lg bg-inverse-surface text-inverse-on-surface font-code-sm text-code-sm overflow-auto whitespace-pre-wrap">${esc(text)}</pre><button type="button" data-copy="${esc(text)}" class="absolute top-2 right-2 w-7 h-7 rounded-md bg-white/10 hover:bg-white/20 text-inverse-on-surface inline-flex items-center justify-center" title="Kopyala">${icon("content_copy", "text-[16px]")}</button></div>`;
+  return `<div class="relative"><pre data-no-i18n class="p-3 rounded-lg bg-inverse-surface text-inverse-on-surface font-code-sm text-code-sm overflow-auto whitespace-pre-wrap">${esc(text)}</pre><button type="button" data-copy="${esc(text)}" class="absolute top-2 right-2 w-7 h-7 rounded-md bg-white/10 hover:bg-white/20 text-inverse-on-surface inline-flex items-center justify-center" title="Kopyala">${icon("content_copy", "text-[16px]")}</button></div>`;
 }
 
 function bindCopy(root) {
@@ -114,14 +114,38 @@ function bindCopy(root) {
   });
 }
 
-function recoveryGuide(dev, generation) {
-  const idShort = String(dev.device_id || dev.id).slice(0, 8);
-  const dept = String(dev.department || "").trim() || "<departman>";
-  const drivePath = `repositories/${dept}/${dev.hostname}--${idShort}/${generation || "<generation>"}`;
+const RECOVERY_LOCATION_ERRORS = {
+  no_repository: "Bu bilgisayar için repository kaydı bulunamadı.",
+  ambiguous_repository: "Birden fazla repository nesli var; kurtarılacak konumu yönetici doğrulamalı.",
+  gateway_not_configured: "Gateway yönetim bağlantısı yapılandırılmamış.",
+  gateway_unavailable: "Gateway konumu doğrulanamadı. Gateway bağlantısını ve yönetim yetkisini kontrol edin.",
+  gateway_upgrade_required: "Kurtarma konumunu öğrenmek için gateway sürümünü güncelleyin.",
+  not_registered: "Gateway kaydı bulunamadı. Kalıcı registry yedeğinden repository konumunu doğrulayın.",
+  generation_mismatch: "Panel ve gateway repository nesilleri uyuşmuyor. Kurtarılacak nesli yönetici doğrulamalı.",
+  invalid_storage_prefix: "Gateway kaydındaki repository yolu geçersiz. Kalıcı registry kaydını doğrulayın.",
+  unsupported_storage_root: "Depolama kökü güvenle gösterilemiyor. Yönetici erişim bilgisi içermeyen kurtarma konumunu sağlamalı.",
+  invalid_gateway_response: "Gateway kurtarma konumu yanıtı doğrulanamadı.",
+};
+
+async function fetchRecoveryLocation(dev) {
+  try {
+    return await api(`/api/v1/admin/devices/${dev.device_id || dev.id}/recovery-location`);
+  } catch {
+    return { available: false, reason: "gateway_unavailable" };
+  }
+}
+
+function powershellLiteral(value) {
+  return "'" + String(value).replaceAll("'", "''") + "'";
+}
+
+function recoveryGuide(dev, location) {
+  const available = !!(location && location.available && location.location);
+  const remote = available && location.storage_kind === "rclone";
   const cmds = [
     "# Yeni bilgisayarda, yönetici PowerShell:",
     '$env:RESTIC_PASSWORD = "<kasadan gösterdiğiniz anahtar>"',
-    `rclone copy "stowline-drive:${drivePath}" C:\\Recovery\\repo-copy`,
+    ...(remote ? [`rclone copy ${powershellLiteral(location.location)} C:\\Recovery\\repo-copy`] : []),
     "stowline-recovery.exe copy --src C:\\Recovery\\repo-copy --dst D:\\independent\\repo-copy",
     `stowline-recovery.exe verify --repo D:\\independent\\repo-copy --restic C:\\Stowline\\bin\\restic.exe --sha256 ${RESTIC_PIN}`,
     `stowline-recovery.exe list-snapshots --repo D:\\independent\\repo-copy --restic C:\\Stowline\\bin\\restic.exe --sha256 ${RESTIC_PIN}`,
@@ -132,9 +156,13 @@ function recoveryGuide(dev, generation) {
     <h3 class="font-headline-sm text-headline-sm font-bold text-on-surface flex items-center gap-2">${icon("local_fire_department", "text-amber-500")}Bilgisayar yandı ya da kayboldu mu?</h3>
     <ol class="mt-4 space-y-4">
       ${step(1, "Kasadan anahtarı göster", "Bu sayfadaki <strong>Göster</strong> düğmesi; yönetici şifresi gerekir.")}
-      ${step(2, "Depodaki klasörü bul", `<span class="font-code-sm text-code-sm break-all text-on-surface">${esc(drivePath)}</span>`)}
-      ${step(3, "Yeni bilgisayarda kurtarma aracını çalıştır", copyBlock(cmds))}
-      ${step(4, "Dosyaları geri yükle", "Dosyalar yalnızca <strong>bekleme (staging)</strong> klasörüne yazılır; kontrol edip yerine kopyalayın.")}
+      ${step(2, "Depodaki klasörü bul", available
+        ? `<span data-no-i18n class="font-code-sm text-code-sm break-all text-on-surface">${esc(location.location)}</span><p class="mt-2">${remote
+          ? "Yeni bilgisayarda aynı adlı rclone remote’unu erişim bilgilerinizle yapılandırın."
+          : "Bu konum gateway dosya sistemindedir. Gateway üzerinde bağımsız bir kopya alın ve yeni bilgisayarda C:\\Recovery\\repo-copy konumuna taşıyın."}</p>`
+        : `<p class="text-error">${esc(RECOVERY_LOCATION_ERRORS[location && location.reason] || RECOVERY_LOCATION_ERRORS.invalid_gateway_response)}</p><p class="mt-2">Konum doğrulanmadan kurtarma komutu oluşturulmaz.</p>`)}
+      ${available ? step(3, "Yeni bilgisayarda kurtarma aracını çalıştır", copyBlock(cmds)) : ""}
+      ${available ? step(4, "Dosyaları geri yükle", "Dosyalar yalnızca <strong>bekleme (staging)</strong> klasörüne yazılır; kontrol edip yerine kopyalayın.") : ""}
     </ol>
     <p class="mt-4 font-body-sm text-body-sm text-outline">Anahtarın <strong>çevrimdışı bir kopyasını</strong> (parola yöneticisi + kasadaki kâğıt) ayrıca saklayın; bu kasa yalnızca ek bir kopyadır.</p></div>`;
 }
@@ -146,9 +174,9 @@ function keyMetaRows(v) {
 
 const VAULT_OFF = `<div class="mb-4 rounded-lg border border-amber-300 bg-amber-50 text-amber-900 px-4 py-3 font-body-md text-body-md">Şifre kasası sunucuda henüz yapılandırılmadı (<span class="font-code-sm text-code-sm">STOWLINE_ESCROW_KEY</span> tanımlı değil); anahtar kaydedilemez ve gösterilemez.</div>`;
 
-function renderSifrelerTab(body, d, dv) {
+async function renderSifrelerTab(body, d, dv) {
   const v = d.vault || {};
-  const gen = d.repository && d.repository.generation_id;
+  const location = await fetchRecoveryLocation(dv);
   body.innerHTML = `${v.enabled ? "" : VAULT_OFF}
     <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
       <div class="lg:col-span-5 ${UI.card} p-5">
@@ -161,7 +189,7 @@ function renderSifrelerTab(body, d, dv) {
         </div>
         ${v.has_key ? "" : `<p class="mt-3 font-body-sm text-body-sm text-outline">Bilgisayarda “Anahtar Yedekleme” aracını çalıştırın; araç anahtarı sunucuya da kaydedebilir. Ya da anahtarı buraya elle yapıştırın.</p>`}
       </div>
-      <div class="lg:col-span-7">${recoveryGuide(dv, gen)}</div>
+      <div class="lg:col-span-7">${recoveryGuide(dv, location)}</div>
     </div>
     <p class="mt-4 font-body-sm text-body-sm text-outline">Yönetici (panel) şifresi burada gösterilmez; Ayarlar → Yönetici hesabı'ndan değiştirilir.</p>`;
   const show = $("#k-show");
@@ -177,15 +205,7 @@ Pages["sifre-kasasi"] = {
     const items = vlt.items || [];
     const missing = items.filter((x) => !x.has_key && x.lifecycle === "ACTIVE").length;
     const pick = items.find((x) => x.has_key) || items[0];
-    let generation = "";
-    if (pick) {
-      try {
-        const det = await api(`/api/v1/admin/devices/${pick.device_id}`);
-        generation = det.repository && det.repository.generation_id;
-      } catch {
-        /* the guide falls back to a placeholder */
-      }
-    }
+    const location = pick ? await fetchRecoveryLocation(pick) : null;
     view.innerHTML = `
       <section class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${UI.card} p-5">
         <div><h1 class="font-headline-lg text-headline-lg text-primary font-bold tracking-tight">Şifre Kasası</h1><p class="font-body-md text-body-md text-outline mt-0.5">Her bilgisayarın yedekleme anahtarı · ${items.filter((x) => x.has_key).length}/${items.length} kayıtlı</p></div>
@@ -208,7 +228,7 @@ Pages["sifre-kasasi"] = {
                 .join("")}</tbody></table>`
             : `<div class="p-12 text-center text-outline">Henüz bilgisayar yok.</div>`
         }</div>
-        <div class="lg:col-span-12">${pick ? recoveryGuide(pick, generation) : ""}</div>
+        <div class="lg:col-span-12">${pick ? recoveryGuide(pick, location) : ""}</div>
       </section>
       <p class="font-body-sm text-body-sm text-outline">Yönetici (panel) şifresi burada gösterilmez; Ayarlar → Yönetici hesabı'ndan değiştirilir.</p>`;
     $$("[data-show]", view).forEach((b) => (b.onclick = () => openRevealModal(items.find((x) => x.device_id === b.getAttribute("data-show")))));

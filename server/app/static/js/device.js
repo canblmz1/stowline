@@ -691,7 +691,7 @@ Pages["device"] = {
     else if (tab === "yedekler") renderYedeklerTab(body, d, dv);
     else if (tab === "dosyalar") await renderDosyalarTab(body, d, dv);
     else if (tab === "zamanlama") renderZamanlamaTab(body, d, dv);
-    else if (tab === "sifreler") renderSifrelerTab(body, d, dv);
+    else if (tab === "sifreler") await renderSifrelerTab(body, d, dv);
     else if (tab === "geri-yukleme") await renderGeriYuklemeTab(body, d, dv, query);
     else if (tab === "olaylar") await renderOlaylarTab(body, d, dv);
   },

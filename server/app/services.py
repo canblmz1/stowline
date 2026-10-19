@@ -651,6 +651,61 @@ def fetch_gateway_usage() -> dict:
         return {}
 
 
+def recovery_location(db: Session, device: Device) -> dict:
+    """Fetch the real namespace from the gateway's durable registry.
+
+    Labels and the REST URL cannot reconstruct an enrollment-time storage
+    prefix. Older gateways, unavailable registries and ambiguous generations
+    therefore return an explicit incomplete result, never a guessed path.
+    """
+    repos = db.scalars(select(Repository).where(Repository.device_id == device.id, Repository.role == "PRIMARY")).all()
+    if not repos:
+        return {"available": False, "reason": "no_repository"}
+    if len(repos) != 1:
+        return {"available": False, "reason": "ambiguous_repository"}
+    repo = repos[0]
+    url = (settings.gateway_admin_url or "").strip()
+    token = (settings.gateway_admin_token or "").strip()
+    if not url or not token:
+        return {"available": False, "reason": "gateway_not_configured"}
+    try:
+        result = httpx.get(
+            url.rstrip("/") + f"/admin/recovery-location/{repo.device_id}/{repo.generation_id}",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=4.0,
+        )
+    except Exception:
+        return {"available": False, "reason": "gateway_unavailable"}
+    if result.status_code == 404:
+        return {"available": False, "reason": "gateway_upgrade_required"}
+    if result.status_code != 200:
+        return {"available": False, "reason": "gateway_unavailable"}
+    try:
+        data = result.json()
+    except ValueError:
+        return {"available": False, "reason": "invalid_gateway_response"}
+    if not isinstance(data, dict):
+        return {"available": False, "reason": "invalid_gateway_response"}
+    reasons = ("not_registered", "generation_mismatch", "invalid_storage_prefix", "unsupported_storage_root")
+    if data.get("available") is False and data.get("reason") in reasons:
+        return {"available": False, "reason": data["reason"]}
+    location = data.get("location")
+    if (
+        data.get("available") is not True
+        or data.get("device_id") != device.id
+        or data.get("generation_id") != repo.generation_id
+        or data.get("storage_kind") not in ("local", "rclone")
+        or data.get("prefix_source") not in ("registry", "legacy_device_id")
+        or not isinstance(location, str)
+        or not location
+        or any(ord(ch) < 32 or ord(ch) == 127 for ch in location)
+    ):
+        return {"available": False, "reason": "invalid_gateway_response"}
+    # Explicit allowlist: no registry hash, storage credential, or key can
+    # accidentally escape by returning the gateway's entire response.
+    return {"available": True, **{key: data[key] for key in ("device_id", "generation_id", "storage_kind", "location", "prefix_source")}}
+
+
 def drive_usage(db: Session) -> dict:
     raw = fetch_gateway_usage()
     if not raw.get("available"):
