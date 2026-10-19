@@ -11,7 +11,7 @@
 
 <p align="center"><b>English</b> · <a href="#türkçe">Türkçe</a></p>
 
-Stowline backs up the work files of every Windows computer in your office — or several offices — to storage **you** control: Google Drive, S3, Backblaze B2, SFTP or anything else [rclone](https://rclone.org) speaks. Everything is encrypted on the PC with [restic](https://restic.net) before it leaves. One admin panel shows every computer and its live progress; people restore their own files without calling IT.
+Stowline helps a small IT team back up Windows work files across several locations with limited internet capacity, to storage **you** control. Files are encrypted on the PC with [restic](https://restic.net); the gateway accesses storage through [rclone](https://rclone.org). One panel manages devices and site upload budgets. The first operational goal is a verified file restore, including recovery without the original PC.
 
 <p align="center">
   <img src="docs/media/demo.gif" alt="Stowline in action: admin panel with live progress, the user's backup app, restoring a file, the one-file installer" width="100%">
@@ -24,19 +24,19 @@ git clone https://github.com/canblmz1/stowline && cd stowline/deployments/demo
 docker compose up -d        # then open http://localhost:8080 — admin / demo
 ```
 
-It grew out of a real multi-site business with ordinary office PCs and thin internet lines, and ran there in production before being published.
+It grew out of a working backup system in a real multi-site business. That is usage evidence for the company system; the public repository, configuration and release artifacts need their own validation. Start with the [2–3 device pilot](docs/PILOT.md), using your own remote/root and synthetic files. Demo data is not independent adoption evidence.
 
 ## Why Stowline
 
 |  |  |
 |---|---|
-| 🧩 **One file to install** | `Stowline Setup.exe`: type the server address and a setup code from the panel, pick site and department — done. The admin password is never typed on the PCs. It finds the work files (Desktop, Documents, Office files, Outlook PST), skips games, caches and credential files, and replaces an older install by itself. |
+| 🧩 **One file to install** | `Stowline Setup.exe`: enter the server address and a setup code, then pick site and department. It finds work files and excludes games, caches and credential files. Existing installations use the identity-preserving update procedure. |
 | 🚦 **Won't choke the office line** | Each site gets a measured upload speed and a budget (say 40 %). The server admits only as many simultaneous backups as fit, and the gateway caps the site's total. |
 | 🔒 **Encrypted, no cloud keys on PCs** | restic encrypts on the PC. PCs only talk to your server; only the gateway holds the storage credentials, and each PC can reach only its own repository. |
-| 📸 **Open files too** | Windows VSS snapshots, so open Outlook PSTs and Excel files are backed up consistently. |
+| 📸 **Open-file support** | Windows VSS integration; validate open-file consistency for your Windows build and applications during qualification. |
 | 🙋 **Self-service restore** | The *Stowline Backups* app shows live progress and lets users bring back any file from any day into a separate *Restored Files* folder — originals are never overwritten. |
 | 🗝️ **Keys you won't lose** | Optional Key Vault on the server plus a tool to put each PC's key on paper / in a password manager. Without the key nobody — including you — can open a backup. |
-| 🔄 **Updates itself** | New agent builds roll out over HTTPS, SHA-256 verified, only when no backup is running, with automatic rollback. |
+| 🔄 **Controlled agent updates** | Matching agent/manifest bundles, SHA-256 verification, selected canaries and a backup/restore restart gate. New builds remain unqualified until reviewed Windows tests; legacy agents need an initial binary-only bootstrap. [Update and rollback limits](docs/RELEASE-UPDATES.md). |
 | 🌍 **English & Türkçe** | Follows the browser / Windows language, with a one-click switch. |
 
 ## Get started in 3 steps
@@ -57,6 +57,11 @@ Caddy gets the HTTPS certificate on its own. Open `https://<your domain>`, sign 
 **3 · Run it on each PC** — create a setup code under **Settings → Setup codes**; the installer asks for the server address and that code, then the site, department and folders; one click at the end starts the first backup.
 
 > The installer is not code-signed, so Windows SmartScreen asks once: *More info → Run anyway*.
+
+Before trusting a device's backups, keep a verified key copy outside that
+device and compare restored file bytes. “Backup completed”, “key retained” and
+“recovery verified” are separate states. Follow the [pilot and independent
+recovery procedure](docs/PILOT.md); the operator owns retention and prune.
 
 Just want to look around? Start the [demo](deployments/demo) (`docker compose up -d` in `deployments/demo`, then <http://localhost:8080>, admin / demo). It is a lab setup without HTTPS and with a known password — never for real data.
 
@@ -117,12 +122,14 @@ Windows with Go 1.26+ and Python 3.12:
 
 ```powershell
 .\scripts\build-release.ps1 -OutDir releases\build
+python scripts\pin-release.py --agent releases\build\stowline-agent.exe --version 0.1.1
+python scripts\pin-release.py --verify
 .\scripts\fetch-pinned-binaries.ps1                     # restic + rclone, SHA-256 checked
 python scripts\package-installer.py                     # generic installer (asks for the server)
 python scripts\package-installer.py --server https://backup.example.com --sites sites.json   # or: server built in
 ```
 
-Tests: `go test ./...`, `pytest server/tests gateway/tests tools/stowline-setup/tests`. Pushing a `v*` tag builds the installer and the container images and publishes a release ([release workflow](.github/workflows/release.yml)).
+Tests: `go test ./...`, `pytest server/tests gateway/tests tools/stowline-setup/tests scripts/tests`. Windows CI also requires pinned restic/rclone and verifies real repository init, backup, full data check, byte-matched restore and recovery without the original endpoint. These automated tests do not qualify VSS or an installed Windows device. Pushing a `v*` tag builds the installer and matching agent/manifest/image bundles and publishes a release ([release workflow](.github/workflows/release.yml)); newly built agents remain unqualified.
 
 | Path | What |
 |---|---|
@@ -158,18 +165,18 @@ This makes Stowline *source-available*, not OSI "open source". Third-party compo
 
 **Kuruluşunuzun Windows bilgisayarları için merkezi yönetilen, şifreli yedekleme — kendi sunucunuzda.**
 
-Stowline, bir ofisteki (ya da birkaç şubedeki) her Windows bilgisayarın iş dosyalarını **sizin** kontrolünüzdeki depolamaya — Google Drive, S3, Backblaze B2, SFTP ya da [rclone](https://rclone.org)'un desteklediği herhangi bir yer — yedekler. Her şey bilgisayardan çıkmadan önce [restic](https://restic.net) ile şifrelenir. Tek bir yönetim paneli her bilgisayarı ve canlı ilerlemesini gösterir; kullanıcılar dosyalarını IT'yi aramadan kendileri geri yükler.
+Stowline, internet kapasitesi sınırlı olabilen birden çok lokasyondaki Windows bilgisayarlarını yöneten küçük IT ekipleri içindir. İş dosyaları bilgisayardan çıkmadan önce [restic](https://restic.net) ile şifrelenir; gateway [rclone](https://rclone.org) üzerinden sizin depolamanıza erişir. İlk hedef, başka bir operatörün kurulumdan doğrulanmış dosya kurtarmaya ve eski cihaz olmadan kurtarmaya ulaşmasıdır.
 
-Sıradan ofis bilgisayarları ve kısıtlı internet hatları olan, birden çok şubeli gerçek bir işletmede ortaya çıktı ve yayınlanmadan önce orada canlıda çalıştı.
+Çalışan bir şirket yedekleme sisteminden doğmuştur. Bu kullanım kanıtı, public repo ile şirket sürümünün aynı commit, yapılandırma veya dağıtım olduğu anlamına gelmez. Kendi remote/root’unuz ve sentetik dosyalarınızla [2–3 cihazlık pilotu](docs/PILOT.md) uygulayın. “Yedekleme tamamlandı”, “anahtarın cihaz dışında doğrulanmış kopyası var” ve “kurtarma doğrulandı” ayrı durumlardır. Demo verimiz bağımsız kullanım kanıtı sayılmaz.
 
 **Neler yapar:**
-- 🧩 **Tek dosyalık kurulum** — sunucu adresini ve panelden alınan kurulum kodunu yazın, şube ve departmanı seçin. Yönetici şifresi bilgisayarlara hiç yazılmaz. İş dosyalarını kendisi bulur; oyunları, önbellekleri ve şifre/anahtar dosyalarını dışarıda bırakır; eski kurulumu kendisi kaldırır.
+- 🧩 **Tek dosyalık kurulum** — sunucu adresini ve panelden alınan kurulum kodunu yazın, şube ve departmanı seçin. İş dosyalarını bulur; oyunları, önbellekleri ve şifre/anahtar dosyalarını dışarıda bırakır. Mevcut kurulumda cihaz kimliğini koruyan güncelleme yolu kullanılır.
 - 🚦 **Ofis hattını tıkamaz** — her şubenin ölçülmüş hızı ve bütçesi (ör. %40) vardır; aynı anda yalnızca sığacak kadar yedek çalışır.
 - 🔒 **Şifreli, bilgisayarlarda bulut şifresi yok** — depolama bilgileri yalnızca sunucudaki gateway'dedir; her bilgisayar yalnızca kendi deposuna erişir.
-- 📸 **Açık dosyalar da** — VSS sayesinde açık Outlook PST ve Excel dosyaları tutarlı yedeklenir.
+- 📸 **Açık dosya desteği** — Windows VSS entegrasyonu vardır; açık dosya tutarlılığını kullandığınız Windows sürümü ve uygulamalarla doğrulayın.
 - 🙋 **Kendi kendine geri yükleme** — *Stowline Backups* uygulaması canlı yüzdeyi gösterir; herhangi bir günden dosyaları ayrı bir *Geri Yüklenenler* klasörüne getirir, orijinallere asla dokunmaz.
 - 🗝️ **Kaybolmayan anahtarlar** — sunucuda isteğe bağlı Şifre Kasası ve anahtarı kâğıda / parola yöneticisine almak için bir araç.
-- 🔄 **Kendini günceller** — yeni sürümler HTTPS üzerinden, SHA-256 doğrulamasıyla, yedekleme yokken yüklenir; sorun olursa geri döner.
+- 🔄 **Kontrollü ajan güncellemesi** — eşleşen binary/manifest, SHA-256 doğrulaması, seçili canary cihazları ve backup/restore sırasında yeniden başlatmayı erteleme. Yeni build gerçek Windows testleri incelenmeden qualified olmaz. Eski ajanların ilk geçişi kimliği koruyan binary değişimi gerektirir. [Güncelleme ve rollback sınırları](docs/RELEASE-UPDATES.md).
 - 🌍 **Türkçe ve İngilizce** arayüz.
 
 **İki dakikada deneyin** — Windows bilgisayar ya da depolama hesabı gerekmez; sekiz bilgisayarlı, canlı yedekleme yapan bir demo ofis açılır:
