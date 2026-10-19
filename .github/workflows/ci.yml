@@ -47,6 +47,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.5"
       - name: UI language layer is rebuilt from i18n/
         run: python scripts/build-i18n.py --check
       - name: Release artifact and qualification regressions
@@ -54,6 +57,37 @@ jobs:
           python -m pip install pytest
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           python -m pytest scripts/tests -q
+      - name: Build and verify an unqualified Windows release bundle
+        run: |
+          $version = "0.0.0-ci.${{ github.run_id }}"
+          ./scripts/build-release.ps1 -OutDir releases/build -Version $version
+          python scripts/pin-release.py --agent releases/build/stowline-agent.exe --version $version
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python scripts/pin-release.py --verify
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ci-agent-bundle
+          path: |
+            release/manifest.json
+            release/bin/stowline-agent.exe
+          if-no-files-found: error
+  server-image-bundle:
+    needs: release-integrity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ci-agent-bundle
+          path: release
+      - name: Verify the bundle and build the server image
+        run: |
+          python3 scripts/pin-release.py --verify
+          docker build -f deployments/compose/Dockerfile.server -t stowline-server:ci .
+      - name: Verify the Windows agent and version inside the image
+        run: |
+          docker run --rm --network none --entrypoint python stowline-server:ci -c 'import hashlib,json; from pathlib import Path; from app.version import RELEASE_VERSION,agent_binary_path,agent_pin; m=json.loads(Path("/release/manifest.json").read_text()); assert m["version"] == RELEASE_VERSION; assert m["agent_qualified"] is False; assert agent_pin() == (m["agent_sha256"], False); assert hashlib.sha256(agent_binary_path().read_bytes()).hexdigest() == m["agent_sha256"]'
   real-engines:
     runs-on: windows-latest
     env:
