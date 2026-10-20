@@ -136,7 +136,8 @@ async function fetchRecoveryLocation(dev) {
 }
 
 function powershellLiteral(value) {
-  return "'" + String(value).replaceAll("'", "''") + "'";
+  // Windows PowerShell also treats both smart single quotes as delimiters.
+  return "'" + String(value).replace(/['\u2018\u2019]/g, (quote) => quote + quote) + "'";
 }
 
 function recoveryGuide(dev, location) {

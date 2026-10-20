@@ -81,6 +81,60 @@ def test_backup_key_is_prompted_securely_and_environment_is_cleared_in_finally()
     assert "$LASTEXITCODE -ne 0" in html
 
 
+@pytest.mark.skipif(shutil.which("powershell") is None, reason="Windows PowerShell 5.1 is required for source argument roundtrip")
+@pytest.mark.parametrize("name", ["O'Brien", "PC\u2018name", "PC\u2019name", "PC'\u2018\u2019name"])
+def test_generated_powershell_passes_repository_source_as_one_literal_argument(tmp_path, name):
+    source = "archive:backups/" + name + "/Türkçe boşluk $HOME `$value $($global:SourceExpressionRan = $true) $(Invoke-SyntheticSourceCommand)/generation"
+    html = render({"available": True, "storage_kind": "rclone", "location": source})
+    commands = re.search(r"<pre data-no-i18n[^>]*>(.*?)</pre>", html, re.S).group(1)
+    # Execute the actual guide block. Harmless functions capture rclone's
+    # arguments and stop before reading a key or running a recovery engine.
+    script = """
+$CaptureFile = $args[0]
+if ($PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSVersion.Minor -ne 1) {
+    throw 'This regression requires Windows PowerShell 5.1'
+}
+$global:SourceExpressionRan = $false
+$global:SourceCommandRan = $false
+$script:RcloneArgs = @()
+function global:Invoke-SyntheticSourceCommand { $global:SourceCommandRan = $true }
+function global:rclone {
+    $script:RcloneArgs = @($args)
+    $global:LASTEXITCODE = 0
+}
+function global:stowline-recovery.exe { throw 'synthetic-source-captured-stop' }
+$stopped = $false
+try {
+    & {
+""" + commands + """
+    }
+} catch {
+    if ($_.Exception.Message -ne 'synthetic-source-captured-stop') { throw }
+    $stopped = $true
+}
+if (-not $stopped) { throw 'Expected synthetic recovery stop' }
+$capture = @{
+    arguments = @($script:RcloneArgs)
+    expression_ran = $global:SourceExpressionRan
+    command_ran = $global:SourceCommandRan
+    powershell_version = $PSVersionTable.PSVersion.ToString()
+} | ConvertTo-Json
+[System.IO.File]::WriteAllText($CaptureFile, $capture, [System.Text.Encoding]::UTF8)
+"""
+    path = tmp_path / "generated-source-roundtrip.ps1"
+    captured = tmp_path / "captured.json"
+    path.write_text(script, encoding="utf-8-sig")
+    env = os.environ.copy()
+    env.pop("PSModulePath", None)
+    result = subprocess.run([shutil.which("powershell"), "-NoProfile", "-NonInteractive", "-File", str(path), str(captured)], capture_output=True, encoding="utf-8", errors="replace", env=env)
+    assert result.returncode == 0, result.stdout + result.stderr
+    data = json.loads(captured.read_text(encoding="utf-8-sig"))
+    assert data["arguments"] == ["copy", source, "C:\\Recovery\\repo-copy"]
+    assert data["expression_ran"] is False
+    assert data["command_ran"] is False
+    assert data["powershell_version"].startswith("5.1.")
+
+
 @pytest.mark.skipif(shutil.which("powershell") is None, reason="Windows PowerShell is required for generated command execution")
 def test_generated_powershell_clears_password_when_repository_check_fails(tmp_path, monkeypatch):
     html = render({"available": True, "storage_kind": "rclone", "location": "archive:recorded/path/generation"})
