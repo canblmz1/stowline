@@ -82,7 +82,7 @@ def test_backup_key_is_prompted_securely_and_environment_is_cleared_in_finally()
 
 
 @pytest.mark.skipif(shutil.which("powershell") is None, reason="Windows PowerShell 5.1 is required for source argument roundtrip")
-@pytest.mark.parametrize("name", ["O'Brien", "PC\u2018name", "PC\u2019name", "PC'\u2018\u2019name"])
+@pytest.mark.parametrize("name", ["O'Brien", "PC\u2018name", "PC\u2019name", "PC\u201aname", "PC\u201bname", "PC'\u2018\u2019\u201a\u201bname"])
 def test_generated_powershell_passes_repository_source_as_one_literal_argument(tmp_path, name):
     source = "archive:backups/" + name + "/Türkçe boşluk $HOME `$value $($global:SourceExpressionRan = $true) $(Invoke-SyntheticSourceCommand)/generation"
     html = render({"available": True, "storage_kind": "rclone", "location": source})
