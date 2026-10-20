@@ -634,55 +634,39 @@ func cmdService(op string) error {
 					return applySelection(ctx, revisionID, sourceRoots, sensitiveConsents, filepath.Join(cfg.PilotRoot, "config", "pilot.json"))
 				},
 				BuildCatalog: buildCatalogFunc(eng, ctrlClient, cfg.Repository, cfg.PasswordRef),
-				OnAgentPin: func(wantSHA256 string, qualified, canaryAllowed bool) {
-					exePath, err := os.Executable()
-					if err != nil {
-						return
-					}
-					// OnAgentPin only fires after a successful heartbeat, which is
-					// exactly the proof a just-installed build needs to stop the
-					// boot-loop guard from rolling it back.
-					confirmUpgradeHealthy(exePath)
-					if !activity.beginUpgrade() {
-						return // try again on a later heartbeat, never mid-backup/restore
-					}
-					staged := false
-					defer func() {
-						if !staged {
-							activity.cancelUpgrade()
+				OnAgentPin: (agentPinHandler{
+					activity:   &activity,
+					exePath:    exe,
+					currentSHA: hashFile,
+					stage: func(exePath, currentSHA, wantSHA256 string, allowed bool) bool {
+						ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+						defer cancel()
+						rollback, err := runAgentUpgrade(ctx, ctrlClient, eng.Runner, exePath, currentSHA, wantSHA256, allowed)
+						if err != nil {
+							fmt.Fprintf(os.Stderr, "agent upgrade attempt failed: %s\n", domain.Redact(err.Error()))
+							return false
 						}
-					}()
-					currentSHA, err := hashFile(exePath)
-					if err != nil {
-						return
-					}
-					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-					defer cancel()
-					rollback, err := runAgentUpgrade(ctx, ctrlClient, eng.Runner, exePath, currentSHA, wantSHA256, qualified || canaryAllowed)
-					if err != nil {
-						fmt.Fprintf(os.Stderr, "agent upgrade attempt failed: %s\n", domain.Redact(err.Error()))
-						return
-					}
-					if rollback == "" {
-						return // already on the pinned build, or nothing qualified to move to
-					}
-					// The new binary is already verified and staged at the live
-					// path. This deliberately does NOT report a graceful Stop --
-					// SCM's recovery policy (EnsureRestartOnFailure, above) only
-					// fires on exactly that kind of abnormal termination, and
-					// relaunching is how the already-swapped binary actually
-					// starts running.
-					if err := writeUpgradeMarker(exePath, rollback); err != nil {
-						// Without the marker the boot-loop guard can't protect this
-						// upgrade; undo the swap rather than run unguarded.
-						_ = restoreRollback(exePath, rollback)
-						fmt.Fprintf(os.Stderr, "agent upgrade aborted, could not record rollback marker: %s\n", domain.Redact(err.Error()))
-						return
-					}
-					fmt.Fprintf(os.Stderr, "agent upgrade staged, restarting to apply (rollback kept at %s)\n", filepath.Base(rollback))
-					staged = true
-					go func() { os.Exit(1) }()
-				},
+						if rollback == "" {
+							return false // already on the pinned build, or nothing qualified to move to
+						}
+						// The new binary is already verified and staged at the live
+						// path. This deliberately does NOT report a graceful Stop --
+						// SCM's recovery policy (EnsureRestartOnFailure, above) only
+						// fires on exactly that kind of abnormal termination, and
+						// relaunching is how the already-swapped binary actually
+						// starts running.
+						if err := writeUpgradeMarker(exePath, rollback); err != nil {
+							// Without the marker the boot-loop guard can't protect this
+							// upgrade; undo the swap rather than run unguarded.
+							_ = restoreRollback(exePath, rollback)
+							fmt.Fprintf(os.Stderr, "agent upgrade aborted, could not record rollback marker: %s\n", domain.Redact(err.Error()))
+							return false
+						}
+						fmt.Fprintf(os.Stderr, "agent upgrade staged, restarting to apply (rollback kept at %s)\n", filepath.Base(rollback))
+						go func() { os.Exit(1) }()
+						return true
+					},
+				}).onPin,
 			}
 			// Best-effort, idempotent: makes sure this service is configured to
 			// be restarted by SCM after the deliberate abnormal exit an
