@@ -77,20 +77,27 @@ def _write_lock(remote_root: str, key: str):
 
     Never unlink lock files: replacing an inode would split the lock domain.
     Fixed stripes bound disk usage. This is NOT a distributed/backend lock.
+
+    Case-insensitive backends can resolve accepted upper/lowercase object IDs
+    to the same object. Coalesce the whole key, including prefix directories,
+    for locking only: never rename or rewrite the persisted repository path.
+    Case-sensitive backends may share a stripe unnecessarily; that is safe.
+    The configured remote_root remains the namespace, not a backend alias
+    resolver. All writers still require the same root and local lock dir.
     """
     root = Path(os.environ.get("STOWLINE_GATEWAY_LOCK_DIR") or
                 str(Path(tempfile.gettempdir()) / "stowline-gateway-locks"))
     namespace = hashlib.sha256(remote_root.encode()).hexdigest()
-    stripe = hashlib.sha256(key.encode()).hexdigest()[:2]
+    lock_key = key.replace("\\", "/").casefold()
+    stripe = hashlib.sha256(lock_key.encode()).hexdigest()[:2]
     directory = root / namespace
     directory.mkdir(parents=True, exist_ok=True)
     with open(directory / stripe, "a+b") as lock:
         if os.name == "nt":
             import msvcrt
-            lock.seek(0, os.SEEK_END)
-            if lock.tell() == 0:
-                lock.write(b"\0")
-                lock.flush()
+            # Windows byte-range locks may extend beyond EOF. Do not write
+            # an initial byte before locking: another worker may already
+            # hold that range on the still-empty file (mandatory locking).
 
             def acquire():
                 lock.seek(0)
