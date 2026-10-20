@@ -35,6 +35,12 @@ root. Compose uses `/data/write-locks`; systemd uses
 delete its files while the gateway is running. The rclone subprocess ceiling
 is per process, and the registry is intended for the single worker model.
 
+Lock identity folds path case so accepted upper/lowercase hex spellings that
+reach the same object on a case-insensitive backend cannot bypass each other.
+Stored paths and existing repositories are unchanged. Drain writes and restart
+the gateway when installing this fix; do not leave old and new writer processes
+running together, since old processes still calculate the previous lock keys.
+
 Independent gateway hosts/containers, different lock directories or aliases
 of the same remote, and external writers are **not supported concurrent
 writers**. These locks are not distributed locks. Rclone `--ignore-existing`

@@ -2,6 +2,12 @@ name: ci
 on:
   push:
   pull_request:
+  workflow_dispatch:
+    inputs:
+      candidate_version:
+        description: "Optional prerelease version for a full, unqualified Windows qualification package"
+        required: false
+        type: string
 jobs:
   go:
     runs-on: windows-latest
@@ -23,7 +29,7 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           go test ./...
       - name: Race (agent internals)
-        run: go test -race ./agent/internal/...
+        run: go test -race ./agent/internal/... ./agent/cmd/stowline-agent
   python:
     runs-on: windows-latest
     steps:
@@ -42,6 +48,8 @@ jobs:
           python -m pytest .\tools\stowline-setup\tests -q
   release-integrity:
     runs-on: windows-latest
+    env:
+      CANDIDATE_VERSION: ${{ inputs.candidate_version }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -59,12 +67,32 @@ jobs:
           python -m pytest scripts/tests -q
       - name: Build and verify an unqualified Windows release bundle
         run: |
-          $version = "0.0.0-ci.${{ github.run_id }}"
+          $version = if ($env:CANDIDATE_VERSION) { $env:CANDIDATE_VERSION } else { "0.0.0-ci.${{ github.run_id }}" }
           ./scripts/build-release.ps1 -OutDir releases/build -Version $version
           python scripts/pin-release.py --agent releases/build/stowline-agent.exe --version $version
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           python scripts/pin-release.py --verify
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Package the exact candidate and run full-installer checks
+        if: inputs.candidate_version != ''
+        run: |
+          ./scripts/fetch-pinned-binaries.ps1
+          python scripts/package-installer.py --build releases/build
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python -m pytest scripts/tests/test_package_installer.py -q --junitxml=releases/installer-runtime-results.xml
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          & ./releases/installer/payload/runtime/python.exe ./releases/installer/payload/wizard/bootstrap.py --verify-only
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python scripts/prepare-candidate.py --results releases/installer-runtime-results.xml
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        if: inputs.candidate_version != ''
+        with:
+          name: windows-qualification-candidate
+          path: releases/qualification-candidate/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
       - uses: actions/upload-artifact@v4
         with:
           name: ci-agent-bundle

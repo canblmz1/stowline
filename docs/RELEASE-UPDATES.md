@@ -164,3 +164,81 @@ report directory, and that nonempty file's SHA-256 in `evidence_sha256`:
 
 CI always stages unqualified builds. Promotion is a separate operator action;
 the tag workflow neither runs this real-device procedure nor claims it passed.
+
+## Prepare one exact qualification candidate
+
+After the narrow fixes and normal PR checks pass, freeze the source commit and
+run the existing CI workflow without publishing a release or image:
+
+```powershell
+gh workflow run ci.yml --ref fix/operator-recovery-chain -f candidate_version=0.1.2-rc.1
+```
+
+The `windows-qualification-candidate` Actions artifact contains the single-file
+installer, portable installer zip, agent, recovery tool, manifest,
+`server-release.zip`, checksums and `candidate.json`. Download it before its
+30-day retention expires and keep the exact bytes with the qualification record.
+The record binds the source commit, version, agent SHA-256 and every artifact's
+hash. It records full-installer tests separately from Windows qualification.
+The four previously optional embedded-runtime/installer tests must actually pass
+without skips for a candidate to be emitted; packaged bootstrap is also run in
+`--verify-only` mode, which does not install a service or enroll a device.
+
+The image job consumes this same candidate's manifest and binary and checks
+their hash/version inside the Linux server image. It does not push the image.
+Keep that job's successful run link together with the candidate record; the
+record itself is generated before the image job finishes. Do not rebuild an
+agent between qualification and promotion: a different hash is a new candidate.
+`agent_qualified` remains false throughout candidate preparation.
+
+## Installed Windows qualification checklist
+
+Use only explicitly authorized, disposable Windows hosts, a separate control
+plane/database/gateway root and synthetic files. A developer workstation or CI
+runner running unit tests is not an installed-device qualification environment.
+No such host was authorized for the second PR implementation round; the steps
+below remain **NOT RUN** until that environment is supplied.
+
+Verify `candidate.json`, the source commit and `SHA256SUMS.txt` before starting.
+Use a known baseline agent that understands `agent_canary_allowed` to test
+automatic updates; the public 0.1.1 agent needs the earlier manual bootstrap.
+Keep its executable/hash and all recovery material. Select only the test device
+ID in the isolated server's canary entry. Never change qualification to true
+to bypass eligibility.
+
+| Check | Required observation/evidence |
+| --- | --- |
+| Service/account/heartbeat | Install from the candidate on a fresh host; record `sc.exe qc StowlineBackup`, actual service account and Windows build. Start/restart through SCM; observe the same device's heartbeat and candidate SHA. |
+| Existing enrollment | On an enrolled baseline host, record device/installation/repository/generation, key fingerprint and snapshot history. Update only the executable; verify all bindings, old snapshot restore and device count afterwards. Keep secrets out of evidence. |
+| Backup/VSS | Back up synthetic text/binary/empty files and an application-appropriate open/locked-file case. Record actual VSS results and compare restored bytes with a retained inventory. A successful restic local test does not prove VSS/application consistency. |
+| Busy backup | Offer the exact candidate during an active backup. Record old executable hash/service PID throughout the job, terminal result, subsequent restart and new heartbeat. |
+| Restore completion | Offer during restore. Check the initiating Windows user's actual read access, then terminal state on disk and after restart. Record engine completion, ACL grant, state persistence and restart order separately. |
+| Wrong/corrupt artifact | Use disposable candidate copies. A mismatched published hash/file or corrupted download must be rejected; current executable, identity and repository remain intact. Record server/agent rejection. |
+| Unhealthy/rollback | On the isolated host, prevent the updated service from confirming a healthy heartbeat, exercise the failed-boot guard and verify the restored executable plus subsequent heartbeat. Observe the behavior while the same bad pin remains offered, then withdraw it. Keep a manual recovery path. |
+| Full installer | Retain the packaged runtime test report and additionally exercise the actual installer/UAC/first enrollment on a clean host without developer Python/Go. Existing installations must stop without deleting identity, keys or history. |
+
+Two existing design limits need explicit handling; they were not introduced by
+this PR's three narrow fixes:
+
+- The restore engine's activity gate currently ends before self-service
+  `GrantRead` and the final job-state persistence. There is no installed-service
+  evidence that automatic restart waits through those final steps. For the pilot,
+  withdraw the canary/normal update offer before a user restore, wait for a
+  heartbeat acknowledging no eligible update, and re-offer only after the user's
+  access and terminal state are verified. Do not qualify concurrent automatic
+  restore/update behavior from an engine-only test. If the controlled check
+  restarts early, retain the failure evidence and either fix the boundary or
+  keep updates in an explicit restore-free maintenance window.
+- Rollback does not quarantine a failed SHA. A restored agent that understands
+  the canary protocol may retry the same still-offered pin. Before returning a
+  host to ordinary work, withdraw that offer (or restore the known-good normal
+  pin), verify a heartbeat sees the changed policy, and confirm that restart/
+  download attempts stop. A rollback by itself is not proof of a stable rollout.
+
+Keep PASS/FAIL/NOT RUN per check. Missing test environment is NOT RUN, never
+PASS. Review the exact candidate's real-device evidence before promotion and
+before treating a 2–3 device independent-operator pilot as complete.
+
+The previous synthetic whole-snapshot ACL test's temporary directory still
+existed when this round began. Only its existence was checked; the previously
+rejected ACL modification/cleanup was not retried.
