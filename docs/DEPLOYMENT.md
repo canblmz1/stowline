@@ -25,6 +25,34 @@ recommended (it encrypts `rclone.conf`); you then pass it as
 Repositories go under the path you choose, e.g. `mydrive:stowline-repositories`;
 each computer gets `<department>/<hostname>--<id>/...` inside it.
 
+Run **one gateway instance with one worker per repository root**, as in the
+provided Compose/systemd deployments. All writes to that root must go through
+that gateway. RcloneStore serializes each object's metadata check, upload and
+byte verification with a host-local OS file lock, including competing Python
+processes that share the same `STOWLINE_GATEWAY_LOCK_DIR` and identical remote
+root. Compose uses `/data/write-locks`; systemd uses
+`/opt/stowline/var/gateway/write-locks`. Keep this directory writable and do not
+delete its files while the gateway is running. The rclone subprocess ceiling
+is per process, and the registry is intended for the single worker model.
+
+Lock identity folds path case so accepted upper/lowercase hex spellings that
+reach the same object on a case-insensitive backend cannot bypass each other.
+Stored paths and existing repositories are unchanged. Drain writes and restart
+the gateway when installing this fix; do not leave old and new writer processes
+running together, since old processes still calculate the previous lock keys.
+
+Independent gateway hosts/containers, different lock directories or aliases
+of the same remote, and external writers are **not supported concurrent
+writers**. These locks are not distributed locks. Rclone `--ignore-existing`
+can report success without creating a file and does not provide an atomic
+create guarantee across writers. The gateway verifies the stored bytes before
+reporting a new write successful; uncertain metadata/transport/auth/JSON errors
+stop a write with an error instead of being treated as an empty repository.
+This does not add storage-level immutability or protect against an administrator
+with the storage credentials. See the pinned rclone
+[stat implementation](https://github.com/rclone/rclone/blob/v1.75.0/fs/operations/lsjson.go)
+and [exit codes](https://rclone.org/docs/#list-of-exit-codes).
+
 ## 2. Sites and departments
 
 Copy `deployments/sites.example.json` and edit it: one entry per location
@@ -139,9 +167,9 @@ cannot sign in to the panel -- so the admin password is never typed on the
 PCs. The installer still accepts the admin login instead. It asks for your server
 address on its first screen and takes the sites and departments from the
 server (the public, non-secret `GET /api/v1/setup/catalog`). It needs
-administrator rights; it unpacks itself, removes a Stowline install that
-belongs to another server, asks before replacing one that belongs to this
-one, and opens the setup wizard. The exe is not code-signed, so Windows
+administrator rights and opens the setup wizard for a fresh installation.
+The updated launcher stops if Stowline is already installed; use the
+enrollment-preserving agent update procedure below. The exe is not code-signed, so Windows
 SmartScreen warns once ("More info" → "Run anyway") unless you sign it with
 your own certificate.
 
@@ -150,6 +178,8 @@ To build it yourself, or to build one with your server address fixed in it
 
 ```powershell
 .\scripts\build-release.ps1 -OutDir releases\build
+python scripts\pin-release.py --agent releases\build\stowline-agent.exe --version 0.1.1
+python scripts\pin-release.py --verify
 .\scripts\fetch-pinned-binaries.ps1
 python scripts\package-installer.py [--server https://backup.example.com --sites C:\path\to\sites.json]
 ```
@@ -158,27 +188,43 @@ The result is `releases\setup-single\Stowline Setup.exe`.
 
 ## 6. Agent updates
 
-After testing a new agent build on one computer:
+The release workflow builds a versioned Windows agent, publishes its binary
+and matching SHA-256 manifest, and packages those same bytes in the server
+image. New builds have **`agent_qualified: false`**. CI and synthetic engine
+tests do not qualify a real Windows installation.
+
+Stage a local candidate without qualifying it:
 
 ```powershell
-python scripts\pin-release.py --agent releases\build\stowline-agent.exe --qualify
+python scripts\pin-release.py --agent releases\build\stowline-agent.exe --version 0.1.1
+python scripts\pin-release.py --verify
 ```
 
-then redeploy the server (`install.sh` again, or rebuild the compose
-images; `STOWLINE_RESTART_GATEWAY=0 install.sh` leaves the gateway, and the
-uploads going through it, alone when only the control plane changed).
+Use the [release/update procedure](RELEASE-UPDATES.md) to deploy the bundle,
+select explicit canary device IDs, verify preserved identity/history and
+exercise busy backup, busy restore and rollback. The public `v0.1.1` agent
+does not understand the new canary permission: its first transition requires
+the documented service-stop/binary-only bootstrap after running work finishes.
+Do not uninstall or re-enroll to update it. Previously downloaded installers
+retain their original behavior; use the corrected build for fresh installations.
 
-To try a new build on a few computers first, put it at
-`release/bin/stowline-agent-canary.exe` and add to `release/manifest.json`
+Only after real Windows checks and review of the exact candidate's evidence:
 
-```json
-"canary": {"agent_sha256": "<its SHA-256>", "device_ids": ["<device id>", "..."]}
+```powershell
+python scripts\pin-release.py --qualify --qualification path\to\report.json
 ```
 
-Only those computers upgrade (the file is re-read on every heartbeat, no
-restart needed); the rest keep the qualified pin. Remove the entry to stop. Every enrolled computer picks the new build up on its next
-heartbeat, verifies the SHA-256, restarts into it once no backup or restore
-is running, and rolls back if it does not come up healthy.
+Deploy the promoted manifest with its matching binary. Updated agents verify
+the downloaded hash and defer restart during backup/restore. Rollback is a
+failed-boot guard, not a general health timeout; a candidate that stays alive
+without heartbeats or fails before executing its guard can require manual
+rollback. The procedure documents those limits. Agent update does not update
+restic/rclone, desktop applications or enroll a second device.
+
+For a control-plane-only systemd redeploy, `STOWLINE_RESTART_GATEWAY=0 install.sh`
+leaves gateway uploads running. The recovery-location change requires updating
+both the panel and gateway; the guide reports missing information against an
+older gateway rather than guessing a path.
 
 ## Backing up the backup keys
 
@@ -194,3 +240,17 @@ backups — unless the key was saved elsewhere:
 
 Keep `STOWLINE_ESCROW_KEY` itself somewhere safe and separate: without it the
 Key Vault copies cannot be decrypted.
+
+The authorized recovery guide obtains the actual root, enrollment-time storage
+prefix and generation from the gateway registry. Renaming a department or
+computer does not move that repository. Preserve the registry with your private
+deployment backups. On a clean workstation configure the same named rclone
+remote separately; a local store path is on the gateway/container and needs an
+export there first. An unavailable or ambiguous location must be resolved before
+recovery. Existing repositories do not move as part of this change.
+
+Follow [the pilot and independent recovery procedure](PILOT.md) to compare
+restored bytes without the original device and retain database/config/escrow
+recovery material. Backup success, off-device key custody and verified recovery
+are separate outcomes. Retention/prune and storage capacity remain the IT
+operator's responsibility; configured retention values do not schedule pruning.

@@ -10,6 +10,7 @@ Group=stowline
 WorkingDirectory=/opt/stowline/var/gateway
 EnvironmentFile=/etc/stowline/gateway.env
 Environment=PATH=/opt/stowline/bin:/usr/bin:/bin
+Environment=STOWLINE_GATEWAY_LOCK_DIR=/opt/stowline/var/gateway/write-locks
 ExecStart=/opt/stowline/venv-gateway/bin/python /opt/stowline/app/current/gateway/entrypoint.py
 Restart=on-failure
 RestartSec=5

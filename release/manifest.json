@@ -8,5 +8,5 @@
   "rclone_sha256": "8be30f02266a6eaad9d481941ef287b9744bb7140034b097ad862a2ccff3e24c",
   "workspace_repo_init_sha256": "",
   "minimum_schema_version": 1,
-  "notes": "Release identity for the control plane. agent_sha256 + agent_qualified drive automatic agent upgrades: copy a tested stowline-agent.exe to release/bin/ and run python scripts/pin-release.py --qualify. restic/rclone pins are the upstream builds the installer ships."
+  "notes": "Release CI stages its exact versioned agent in this manifest and ships the same bundle in server images. New builds are unqualified. Automatic upgrades require operator-reviewed real Windows evidence; see docs/RELEASE-UPDATES.md. restic/rclone pins identify installer engine bytes."
 }

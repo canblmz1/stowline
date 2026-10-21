@@ -6,12 +6,14 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+if ($Version -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$') { throw 'Version must be a semantic version without the v prefix' }
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 
 $env:CGO_ENABLED = "0"
-$common = @("-trimpath", "-buildvcs=false", "-ldflags", "-buildid=")
+$versionFlag = "-X github.com/canblmz1/stowline/agent/internal/buildinfo.Version=$Version"
+$common = @("-trimpath", "-buildvcs=false", "-ldflags", "-buildid= $versionFlag")
 # The three desktop programs are GUI-subsystem exes (no console window).
-$gui = @("-trimpath", "-buildvcs=false", "-ldflags", "-H windowsgui -buildid=")
+$gui = @("-trimpath", "-buildvcs=false", "-ldflags", "-H windowsgui -buildid= $versionFlag")
 $desktop = [ordered]@{
     "Stowline Backups.exe" = "./agent/cmd/stowline-backups"
     "Stowline Admin.exe"    = "./agent/cmd/stowline-admin"
@@ -21,13 +23,16 @@ $desktop = [ordered]@{
 Push-Location $PSScriptRoot\..
 try {
     go build @common -o (Join-Path $OutDir "stowline-agent.exe") .\agent\cmd\stowline-agent
+    if ($LASTEXITCODE -ne 0) { throw 'agent build failed' }
     go build @common -o (Join-Path $OutDir "stowline-recovery.exe") .\recovery\cmd\stowline-recovery
+    if ($LASTEXITCODE -ne 0) { throw 'recovery build failed' }
     # Ships in the installer with its own pinned SHA (bootstrap.py's
     # WORKSPACE_REPO_INIT) and imports the same internal packages as the
     # agent, so a change to any of those changes this binary's bytes too
     # even though its own main.go did not change -- it must be rebuilt and
     # reproducibility-checked alongside the agent, not separately by hand.
     go build @common -o (Join-Path $OutDir "workspace-repo-init.exe") .\agent\cmd\workspace-repo-init
+    if ($LASTEXITCODE -ne 0) { throw 'repository initializer build failed' }
     foreach ($name in $desktop.Keys) {
         go build @gui -o (Join-Path $OutDir $name) $desktop[$name]
         if ($LASTEXITCODE -ne 0) { throw "build failed: $name" }

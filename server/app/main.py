@@ -559,6 +559,15 @@ def admin_snapshot_reconciliation(device_id: str, db: Session = Depends(get_db),
     return {"schema_version": 1, **services.reconcile_snapshots(db, d)}
 
 
+@app.get("/api/v1/admin/devices/{device_id}/recovery-location")
+def admin_recovery_location(device_id: str, response: Response, db: Session = Depends(get_db), user=Depends(operator)):
+    d = db.get(Device, device_id)
+    if d is None:
+        raise HTTPException(404, "not found")
+    response.headers["Cache-Control"] = "no-store"
+    return {"schema_version": 1, **services.recovery_location(db, d)}
+
+
 @app.post("/api/v1/admin/enrollment-tokens")
 def enrollment_tokens(body: EnrollmentTokenIn, db: Session = Depends(get_db), actor=Depends(setup_actor), idempotency_key: str = Header(default="", alias="Idempotency-Key")):
     _ = idempotency_key

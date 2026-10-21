@@ -4,11 +4,14 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/debug"
 	"golang.org/x/sys/windows/svc/eventlog"
@@ -28,16 +31,19 @@ const (
 
 const Name = "StowlineBackup"
 
-type Runner interface {
-	RunOnce(ctx context.Context) error
-}
-
 type commandDiagnosticSinkSetter interface {
 	SetCommandDiagnosticSink(func(string))
 }
 
 type Service struct {
-	Runner Runner
+	Startup     Startup
+	Interactive bool
+	Runner      Runner
+	// Internal seams exercise Execute itself without reconfiguring the host or
+	// terminating the test process. Run uses the real implementations below.
+	ensureRecovery func() error
+	restart        func(chan<- svc.Status) error
+	log            elog
 }
 
 func IsServiceContext() bool {
@@ -51,12 +57,54 @@ func (s *Service) Execute(args []string, r <-chan svc.ChangeRequest, changes cha
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	var log elog = nopElog{}
-	if l, err := eventlog.Open(Name); err == nil {
-		defer l.Close()
-		log = l
+	var log elog = s.log
+	if log == nil {
+		log = nopElog{}
+		if l, err := eventlog.Open(Name); err == nil {
+			defer l.Close()
+			log = l
+		}
 	}
 	_ = log.Info(evStart, "Stowline service starting")
+	fail := func(err error) (bool, uint32) {
+		message := domain.Redact(err.Error())
+		_ = log.Error(evStart, message)
+		fmt.Fprintln(os.Stderr, message)
+		return true, 1
+	}
+	if !s.Interactive {
+		ensure := s.ensureRecovery
+		if ensure == nil {
+			ensure = EnsureRestartOnFailure
+		}
+		if err := ensure(); err != nil {
+			return fail(fmt.Errorf("automatic update recovery unavailable: %w", err))
+		}
+	}
+	if s.Startup != nil {
+		runner, err := s.Startup()
+		if err != nil {
+			message := "service initialization: " + domain.Redact(err.Error())
+			if errors.Is(err, ErrRestartRequired) {
+				_ = log.Warning(evStart, message)
+			} else {
+				_ = log.Error(evStart, message)
+			}
+			fmt.Fprintln(os.Stderr, message)
+			if s.Interactive {
+				return true, 1
+			}
+			restart := s.restart
+			if restart == nil {
+				restart = restartRolledBackService
+			}
+			return fail(restart(changes)) // Only returns if the handoff failed.
+		}
+		s.Runner = runner
+	}
+	if s.Runner == nil {
+		return fail(fmt.Errorf("service startup returned no runner"))
+	}
 	if setter, ok := s.Runner.(commandDiagnosticSinkSetter); ok {
 		// Lifecycle traces contain no payload or raw error. Rate-limit each
 		// distinct marker/id combination so a transient redelivery loop cannot
@@ -149,8 +197,35 @@ func (s *Service) Execute(args []string, r <-chan svc.ChangeRequest, changes cha
 	}
 }
 
-func Run(runner Runner, interactive bool) error {
-	s := &Service{Runner: runner}
+// restartRolledBackService is called only inside Execute, after SCM registered
+// its status handle and recovery was verified. The Running channel send first
+// orders svc.Run's preceding StartPending update before our synchronous update:
+// its unbuffered receiver finishes each update before accepting the next. Both
+// remaining updates are Running, so no late StartPending can overwrite it.
+// SetServiceStatus then confirms the handoff before os.Exit; a channel send
+// alone would not guarantee completion. No application work has started.
+// Deliberately do not report SERVICE_STOPPED: non-crash recovery may be disabled.
+func restartRolledBackService(changes chan<- svc.Status) error {
+	return restartRegisteredService(changes, func() error {
+		status := windows.SERVICE_STATUS{
+			ServiceType:  windows.SERVICE_WIN32_OWN_PROCESS,
+			CurrentState: windows.SERVICE_RUNNING,
+		}
+		return windows.SetServiceStatus(svc.StatusHandle(), &status)
+	}, func() { os.Exit(1) })
+}
+
+func restartRegisteredService(changes chan<- svc.Status, reportRunning func() error, exit func()) error {
+	changes <- svc.Status{State: svc.Running}
+	if err := reportRunning(); err != nil {
+		return fmt.Errorf("rollback restart status: %w", err)
+	}
+	exit()
+	return fmt.Errorf("SCM restart termination unexpectedly returned")
+}
+
+func Run(start Startup, interactive bool) error {
+	s := &Service{Startup: start, Interactive: interactive}
 	if interactive {
 		return debug.Run(Name, s)
 	}
@@ -182,7 +257,9 @@ func Install(exe string) error {
 	}
 	defer created.Close()
 	_ = eventlog.InstallAsEventCreate(Name, eventlog.Error|eventlog.Warning|eventlog.Info)
-	_ = setRestartOnFailure(created)
+	if err := setRestartOnFailure(created); err != nil {
+		return errors.Join(fmt.Errorf("configure service recovery: %w", err), created.Delete())
+	}
 	return nil
 }
 
@@ -193,8 +270,32 @@ func Install(exe string) error {
 // deliberately does (os.Exit, not a graceful Stop) to hand control back to
 // SCM once the new binary is already staged on disk. Without this, that
 // exit would just leave the service down until a human noticed.
-func setRestartOnFailure(s *mgr.Service) error {
-	return s.SetRecoveryActions([]mgr.RecoveryAction{{Type: mgr.ServiceRestart, Delay: 5 * time.Second}}, uint32((24 * time.Hour).Seconds()))
+type recoveryService interface {
+	SetRecoveryActions([]mgr.RecoveryAction, uint32) error
+	RecoveryActions() ([]mgr.RecoveryAction, error)
+	ResetPeriod() (uint32, error)
+}
+
+func setRestartOnFailure(s recoveryService) error {
+	const reset = uint32((24 * time.Hour) / time.Second)
+	if err := s.SetRecoveryActions([]mgr.RecoveryAction{{Type: mgr.ServiceRestart, Delay: 5 * time.Second}}, reset); err != nil {
+		return err
+	}
+	actions, err := s.RecoveryActions()
+	if err != nil {
+		return fmt.Errorf("read recovery actions: %w", err)
+	}
+	if len(actions) != 1 || actions[0].Type != mgr.ServiceRestart || actions[0].Delay != 5*time.Second {
+		return fmt.Errorf("SCM recovery actions do not match restart policy")
+	}
+	period, err := s.ResetPeriod()
+	if err != nil {
+		return fmt.Errorf("read recovery reset period: %w", err)
+	}
+	if period != reset {
+		return fmt.Errorf("SCM recovery reset period does not match restart policy")
+	}
+	return nil
 }
 
 // EnsureRestartOnFailure applies the same recovery policy to an already

@@ -44,6 +44,50 @@ def _safe_storage_prefix(raw: str | None) -> str:
     if not parts or any(p in ("", ".", "..") for p in parts):
         return ""
     return "/".join(parts)
+
+
+def _recovery_location(store, registry: "Registry", device_id: str, generation_id: str) -> dict:
+    """Resolve without creating directories or returning registry credentials.
+
+    The registry is the authoritative, enrollment-time namespace. A missing
+    prefix in a legacy record means device_id; a missing record is unknown.
+    Only named rclone remotes are disclosed: inline backend specifications
+    can embed credentials and need an operator-provided recovery location.
+    """
+    rec = registry.load().get(device_id)
+    if not isinstance(rec, dict):
+        return {"available": False, "reason": "not_registered"}
+    if rec.get("generation_id") != generation_id:
+        return {"available": False, "reason": "generation_mismatch"}
+    raw_prefix = rec.get("storage_prefix")
+    if raw_prefix and (
+        not isinstance(raw_prefix, str)
+        or not _safe_storage_prefix(raw_prefix)
+        or any(ord(ch) < 32 or ord(ch) == 127 or ch == ":" for ch in raw_prefix)
+    ):
+        return {"available": False, "reason": "invalid_storage_prefix"}
+    prefix = _safe_storage_prefix(raw_prefix) if raw_prefix else device_id
+    kind = getattr(store, "kind", "")
+    if kind == "local":
+        location = str(Path(store.root).resolve() / prefix / generation_id)
+    elif kind == "rclone":
+        root = str(store.remote_root)
+        remote, sep, _path = root.partition(":")
+        if not sep or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_. -]*", remote) or any(ord(ch) < 32 or ord(ch) == 127 for ch in root):
+            return {"available": False, "reason": "unsupported_storage_root"}
+        location = root.rstrip("/") + "/" + prefix + "/" + generation_id
+    else:
+        return {"available": False, "reason": "unsupported_storage_root"}
+    return {
+        "available": True,
+        "device_id": device_id,
+        "generation_id": generation_id,
+        "storage_kind": kind,
+        "location": location,
+        "prefix_source": "registry" if raw_prefix else "legacy_device_id",
+    }
+
+
 RESTIC_REST_V2 = "application/vnd.x.restic.rest.v2"
 
 
@@ -230,6 +274,15 @@ def create_app_with_store(store, registry: Registry, site_limits: dict | None = 
         names = app.state.store.list_names(key)  # [] for a repo with no snapshots yet, never raises
         ids = [n for n in names if ID_RE.match(n)]
         return {"device_id": device_id, "generation_id": generation_id, "snapshot_ids": ids}
+
+    @app.get("/admin/recovery-location/{device_id}/{generation_id}")
+    def admin_recovery_location(device_id: str, generation_id: str, request: Request, response: Response):
+        if not _admin_token_ok(request):
+            raise HTTPException(401, "admin token")
+        if not ID_RE.fullmatch(device_id) or not ID_RE.fullmatch(generation_id):
+            raise HTTPException(400, "invalid identity")
+        response.headers["Cache-Control"] = "no-store"
+        return _recovery_location(app.state.store, app.state.registry, device_id, generation_id)
 
     @app.api_route("/restic/{device_id}/{generation_id}/{full_path:path}", methods=["GET", "HEAD", "POST", "DELETE"])
     async def restic_proxy(device_id: str, generation_id: str, full_path: str, request: Request):

@@ -17,6 +17,8 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -67,6 +69,65 @@ class _RcloneGate:
 
 
 _RCLONE_GATE = _RcloneGate()
+
+
+@contextmanager
+def _write_lock(remote_root: str, key: str):
+    """Host-local OS lock, shared by threads/processes using the same lock dir.
+
+    Never unlink lock files: replacing an inode would split the lock domain.
+    Fixed stripes bound disk usage. This is NOT a distributed/backend lock.
+
+    Case-insensitive backends can resolve accepted upper/lowercase object IDs
+    to the same object. Coalesce the whole key, including prefix directories,
+    for locking only: never rename or rewrite the persisted repository path.
+    Case-sensitive backends may share a stripe unnecessarily; that is safe.
+    The configured remote_root remains the namespace, not a backend alias
+    resolver. All writers still require the same root and local lock dir.
+    """
+    root = Path(os.environ.get("STOWLINE_GATEWAY_LOCK_DIR") or
+                str(Path(tempfile.gettempdir()) / "stowline-gateway-locks"))
+    namespace = hashlib.sha256(remote_root.encode()).hexdigest()
+    lock_key = key.replace("\\", "/").casefold()
+    stripe = hashlib.sha256(lock_key.encode()).hexdigest()[:2]
+    directory = root / namespace
+    directory.mkdir(parents=True, exist_ok=True)
+    with open(directory / stripe, "a+b") as lock:
+        if os.name == "nt":
+            import msvcrt
+            # Windows byte-range locks may extend beyond EOF. Do not write
+            # an initial byte before locking: another worker may already
+            # hold that range on the still-empty file (mandatory locking).
+
+            def acquire():
+                lock.seek(0)
+                msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+
+            def release():
+                lock.seek(0)
+                msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            def acquire():
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+            def release():
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+        deadline = time.monotonic() + RCLONE_TIMEOUT_SEC
+        while True:
+            try:
+                acquire()
+                break
+            except OSError as exc:
+                if time.monotonic() >= deadline:
+                    raise HTTPException(503, "gateway write lock unavailable") from exc
+                time.sleep(0.05)
+        try:
+            yield
+        finally:
+            release()
 
 
 def redact_text(value: str) -> str:
@@ -193,7 +254,12 @@ class LocalStore:
 
 
 class RcloneStore:
-    """Object store backed by rclone. Remote is process-owned, not caller-chosen."""
+    """Single-host writer backed by rclone; remote is never caller-chosen.
+
+    All writers must share a local STOWLINE_GATEWAY_LOCK_DIR and identical
+    remote_root. Multiple hosts/containers with independent locks, remote
+    aliases and external writers are outside the append-only guarantee.
+    """
 
     def __init__(self, remote_root: str, binary: str):
         self.remote_root = remote_root.rstrip("/")
@@ -235,21 +301,12 @@ class RcloneStore:
         if self.is_file(key):
             return False
         code, _out, _err = self._run(["lsf", self._dest(key)], check=False)
+        if code not in (0, 3, 4):
+            raise HTTPException(502, "rclone metadata error")
         return code == 0
 
     def is_file(self, key: str) -> bool:
-        items = self._lsjson(key)
-        if not items:
-            return False
-        base = key.split("/")[-1]
-        if len(items) != 1:
-            return False
-        item = items[0]
-        if item.get("IsDir"):
-            return False
-        name = str(item.get("Name") or "")
-        path = str(item.get("Path") or "")
-        return name == base or path.endswith(base) or path == base
+        return self._file_info(key) is not None
 
     def read_bytes(self, key: str) -> bytes:
         tmp = tempfile.NamedTemporaryFile(delete=False)
@@ -257,7 +314,7 @@ class RcloneStore:
         try:
             code, _out, _err = self._run(["copyto", self._dest(key), tmp.name], check=False)
             if code != 0:
-                raise HTTPException(404, "not found")
+                raise HTTPException(404 if code in (3, 4) else 502, "rclone read failed")
             return Path(tmp.name).read_bytes()
         finally:
             Path(tmp.name).unlink(missing_ok=True)
@@ -269,14 +326,14 @@ class RcloneStore:
             check=False,
         )
         if code != 0:
-            raise HTTPException(404, "not found")
+            raise HTTPException(404 if code in (3, 4) else 502, "rclone read failed")
         return out
 
     def file_size(self, key: str) -> int:
-        items = self._lsjson(key)
-        if items and isinstance(items[0].get("Size"), int):
-            return int(items[0]["Size"])
-        return len(self.read_bytes(key))
+        item = self._file_info(key)
+        if item is None:
+            raise HTTPException(404, "not found")
+        return item["Size"]
 
     def mkdir(self, key: str) -> None:
         self._run(["mkdir", self._dest(key)], check=True)
@@ -290,14 +347,16 @@ class RcloneStore:
             args.append("--recursive")
         args.append(self._dest(key))
         code, out, _err = self._run(args, check=False)
-        if code != 0 or not out.strip():
+        if code in (3, 4):
             return []
+        if code != 0:
+            raise HTTPException(502, "rclone listing error")
         try:
             data = json.loads(out.decode("utf-8"))
-        except json.JSONDecodeError:
-            return []
-        if not isinstance(data, list):
-            return []
+        except (ValueError, UnicodeError) as exc:
+            raise HTTPException(502, "rclone invalid listing") from exc
+        if not isinstance(data, list) or any(not isinstance(item, dict) for item in data):
+            raise HTTPException(502, "rclone invalid listing")
         infos = []
         for item in data:
             if item.get("IsDir"):
@@ -314,39 +373,57 @@ class RcloneStore:
         return sorted(infos, key=lambda item: item["name"])
 
     def write_exclusive(self, key: str, body: bytes) -> str:
-        if self.is_file(key):
-            if self.read_bytes(key) == body:
-                return "same"
-            raise HTTPException(403, "append-only: overwrite blocked")
-        parent = key.rsplit("/", 1)[0] if "/" in key else ""
-        if parent:
-            self.mkdir(parent)
-        tmp = tempfile.NamedTemporaryFile(delete=False)
-        try:
-            tmp.write(body)
-            tmp.close()
-            code, _out, _err = self._run(["copyto", tmp.name, self._dest(key)], check=False)
-        finally:
-            Path(tmp.name).unlink(missing_ok=True)
-        if code != 0:
-            raise HTTPException(502, "rclone transport error")
-        return "created"
+        with _write_lock(self.remote_root, key):
+            if self.is_file(key):
+                if self.read_bytes(key) == body:
+                    return "same"
+                raise HTTPException(403, "append-only: overwrite blocked")
+            parent = key.rsplit("/", 1)[0] if "/" in key else ""
+            if parent:
+                self.mkdir(parent)
+            tmp = tempfile.NamedTemporaryFile(delete=False)
+            try:
+                tmp.write(body)
+                tmp.close()
+                # Defense in depth only: --ignore-existing is not an atomic
+                # create on general rclone backends. The OS lock is essential.
+                code, _out, _err = self._run(["copyto", tmp.name, self._dest(key), "--ignore-existing"], check=False)
+            finally:
+                tmp.close()
+                Path(tmp.name).unlink(missing_ok=True)
+            if code != 0 or self.read_bytes(key) != body:
+                raise HTTPException(502, "rclone write verification failed")
+            return "created"
 
     def delete_file(self, key: str) -> bool:
-        if not self.is_file(key):
-            return False
-        code, _out, _err = self._run(["deletefile", self._dest(key)], check=False)
-        return code == 0
+        with _write_lock(self.remote_root, key):
+            if not self.is_file(key):
+                return False
+            code, _out, _err = self._run(["deletefile", self._dest(key)], check=False)
+            if code not in (0, 3, 4):
+                raise HTTPException(502, "rclone delete failed")
+            return code == 0
 
-    def _lsjson(self, key: str) -> list[dict]:
-        code, out, _err = self._run(["lsjson", self._dest(key)], check=False)
-        if code != 0 or not out.strip():
-            return []
+    def _file_info(self, key: str) -> dict | None:
+        # In pinned rclone, --stat --files-only queries NewObject without
+        # falling back from an object/auth error to a directory listing.
+        # A successful JSON null explicitly means no file (also directories).
+        code, out, _err = self._run(["lsjson", "--stat", "--files-only", self._dest(key)], check=False)
+        if code in (3, 4):
+            return None
+        if code != 0:
+            raise HTTPException(502, "rclone metadata error")
         try:
             data = json.loads(out.decode("utf-8"))
-        except json.JSONDecodeError:
-            return []
-        return data if isinstance(data, list) else []
+        except (ValueError, UnicodeError) as exc:
+            raise HTTPException(502, "rclone invalid metadata") from exc
+        if data is None:
+            return None
+        if (not isinstance(data, dict) or data.get("IsDir") is not False
+                or data.get("Name") != key.rsplit("/", 1)[-1]
+                or type(data.get("Size")) is not int or data["Size"] < 0):
+            raise HTTPException(502, "rclone invalid metadata")
+        return data
 
     def _dest(self, key: str) -> str:
         if not key:

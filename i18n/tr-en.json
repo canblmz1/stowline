@@ -936,5 +936,21 @@
  ". Sihirbazda kodu yazın; şube:": ". In the wizard, type the code; site:",
  "Kodu iptal et": "Revoke code",
  "Bu klasör bu bilgisayardaki başka bir kullanıcıya ait. Yalnızca kendi dosyalarınızı görebilir ve geri yükleyebilirsiniz.": "This folder belongs to another user of this computer. You can only see and restore your own files.",
- "Hangi Windows hesabından bağlandığınız anlaşılamadı. Uygulamayı kapatıp yeniden açın.": "Could not tell which Windows account you are signed in with. Close the app and open it again."
+ "Hangi Windows hesabından bağlandığınız anlaşılamadı. Uygulamayı kapatıp yeniden açın.": "Could not tell which Windows account you are signed in with. Close the app and open it again.",
+ "Bu bilgisayar için repository kaydı bulunamadı.": "No repository record was found for this computer.",
+ "Birden fazla repository nesli var; kurtarılacak konumu yönetici doğrulamalı.": "Multiple repository generations exist; an administrator must confirm the recovery location.",
+ "Gateway yönetim bağlantısı yapılandırılmamış.": "The gateway administration connection is not configured.",
+ "Gateway konumu doğrulanamadı. Gateway bağlantısını ve yönetim yetkisini kontrol edin.": "The gateway location could not be verified. Check gateway connectivity and administration access.",
+ "Kurtarma konumunu öğrenmek için gateway sürümünü güncelleyin.": "Update the gateway to resolve the recovery location.",
+ "Gateway kaydı bulunamadı. Kalıcı registry yedeğinden repository konumunu doğrulayın.": "The gateway record was not found. Confirm the repository location using the persistent registry backup.",
+ "Panel ve gateway repository nesilleri uyuşmuyor. Kurtarılacak nesli yönetici doğrulamalı.": "The panel and gateway repository generations differ. An administrator must confirm the recovery generation.",
+ "Gateway kaydındaki repository yolu geçersiz. Kalıcı registry kaydını doğrulayın.": "The repository path in the gateway record is invalid. Check the persistent registry record.",
+ "Depolama kökü güvenle gösterilemiyor. Yönetici erişim bilgisi içermeyen kurtarma konumunu sağlamalı.": "The storage root cannot be safely displayed. An administrator must provide a recovery location without embedded credentials.",
+ "Gateway kurtarma konumu yanıtı doğrulanamadı.": "The gateway recovery location response could not be validated.",
+ "Yeni bilgisayarda aynı adlı rclone remote’unu erişim bilgilerinizle yapılandırın.": "Configure an rclone remote with the same name and your storage credentials on the new computer.",
+ "Bu konum gateway dosya sistemindedir. Gateway üzerinde bağımsız bir kopya alın ve yeni bilgisayarda C:\\Recovery\\repo-copy konumuna taşıyın.": "This location is on the gateway filesystem. Make an independent copy on the gateway and transfer it to C:\\Recovery\\repo-copy on the new computer.",
+ "Konum doğrulanmadan kurtarma komutu oluşturulmaz.": "Recovery commands are generated only after the location is confirmed.",
+ "Mevcut kurulum korundu. Bu kurucu güncelleme veya cihazı sıfırlama yapmaz. Cihaz kaydını koruyan güncelleme için docs/RELEASE-UPDATES.md adımlarını izleyin.": "The existing installation was preserved. This installer does not update or reset a device. Follow docs/RELEASE-UPDATES.md to update while preserving enrollment.",
+ "Listeden snapshot kimliğini ve kurtarılacak klasörün yolunu seçin. Her denemede yeni bir staging klasörü kullanın. Windows üst klasör ACL’lerinin tam kurtarılması ayrıca doğrulanmalıdır.": "Select the snapshot ID and the folder path from the listing. Use a fresh staging directory for each attempt. Restoring the ACLs of original Windows ancestor folders requires separate validation.",
+ "Staging dosyalarını beklenen byte/içerik ve önceden kaydedilmiş SHA-256 özetleriyle karşılaştırın. Sonucu kaydedin; doğrulanan dosyaları yerine kopyalayın. Repository check işlemi, dosya içeriği karşılaştırmasının yerine geçmez.": "Compare the staged files with their expected bytes/content and previously recorded SHA-256 hashes. Record the result and copy verified files to their destination. A repository check does not replace file content comparison."
 }

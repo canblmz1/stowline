@@ -26,32 +26,58 @@ jobs:
         shell: pwsh
         run: |
           go test ./...
+          if ($LASTEXITCODE -ne 0) { throw 'Go tests failed' }
           python -m pip install -e .\server[dev]
           python -m pytest .\server\tests .\tools\stowline-setup\tests -q
+          if ($LASTEXITCODE -ne 0) { throw 'Python tests failed' }
+          python -m pytest scripts/tests -q
+          if ($LASTEXITCODE -ne 0) { throw 'Release script tests failed' }
       - name: Build and package
         shell: pwsh
         run: |
           $v = "${{ github.ref_name }}".TrimStart("v")
           ./scripts/build-release.ps1 -OutDir releases/build -Version $v
+          python scripts/pin-release.py --agent releases/build/stowline-agent.exe --version $v
+          if ($LASTEXITCODE -ne 0) { throw 'Release agent staging failed' }
+          python scripts/pin-release.py --verify
+          if ($LASTEXITCODE -ne 0) { throw 'Release agent integrity check failed' }
           ./scripts/fetch-pinned-binaries.ps1
           python scripts/package-installer.py --build releases/build
+          if ($LASTEXITCODE -ne 0) { throw 'Installer packaging failed' }
           New-Item -ItemType Directory -Force dist | Out-Null
           Copy-Item "releases/setup-single/Stowline Setup.exe" "dist/Stowline-Setup-$v.exe"
+          Copy-Item release/bin/stowline-agent.exe dist/stowline-agent.exe
+          Copy-Item release/manifest.json dist/manifest.json
           Compress-Archive -Path releases/build/* -DestinationPath "dist/stowline-windows-x64-$v.zip"
           $sums = Get-ChildItem dist | ForEach-Object { "{0}  {1}`n" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name }
           [IO.File]::WriteAllText("$PWD/dist/SHA256SUMS.txt", ($sums -join ""))
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-agent-bundle
+          path: |
+            release/manifest.json
+            release/bin/stowline-agent.exe
+          if-no-files-found: error
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*
+          body_path: release/NOTES.md
           generate_release_notes: true
 
   images:
+    needs: windows
     runs-on: ubuntu-latest
     strategy:
       matrix:
         component: [server, gateway]
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-agent-bundle
+          path: release
+      - name: Verify the exact Windows agent bundle used by images
+        run: python3 scripts/pin-release.py --verify
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io

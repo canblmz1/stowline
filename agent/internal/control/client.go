@@ -334,6 +334,7 @@ type HeartbeatResult struct {
 	SiteID                  string         `json:"site_id"`
 	AgentSHA256             string         `json:"agent_sha256"`
 	AgentQualified          bool           `json:"agent_qualified"`
+	AgentCanaryAllowed      bool           `json:"agent_canary_allowed"`
 }
 
 type AdmissionResult struct {

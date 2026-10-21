@@ -3,7 +3,6 @@
 package service
 
 import (
-	"context"
 	"fmt"
 	"time"
 )
@@ -13,9 +12,7 @@ const (
 	ForcedKillAfter = 2 * time.Second
 )
 
-func Run(runner interface {
-	RunOnce(ctx context.Context) error
-}, interactive bool) error {
+func Run(start Startup, interactive bool) error {
 	return fmt.Errorf("windows service is only available on Windows")
 }
 

@@ -2,6 +2,12 @@ name: ci
 on:
   push:
   pull_request:
+  workflow_dispatch:
+    inputs:
+      candidate_version:
+        description: "Optional prerelease version for a full, unqualified Windows qualification package"
+        required: false
+        type: string
 jobs:
   go:
     runs-on: windows-latest
@@ -20,9 +26,10 @@ jobs:
       - name: Vet and test
         run: |
           go vet ./...
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           go test ./...
       - name: Race (agent internals)
-        run: go test -race ./agent/internal/...
+        run: go test -race ./agent/internal/... ./agent/cmd/stowline-agent
   python:
     runs-on: windows-latest
     steps:
@@ -33,15 +40,104 @@ jobs:
       - name: Server and gateway tests
         run: |
           python -m pip install -e .\server[dev] -e .\gateway[dev]
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           python -m pytest .\server\tests -q
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           python -m pytest .\gateway\tests -q
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           python -m pytest .\tools\stowline-setup\tests -q
   release-integrity:
     runs-on: windows-latest
+    env:
+      CANDIDATE_VERSION: ${{ inputs.candidate_version }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.5"
       - name: UI language layer is rebuilt from i18n/
         run: python scripts/build-i18n.py --check
+      - name: Release artifact and qualification regressions
+        run: |
+          python -m pip install pytest
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python -m pytest scripts/tests -q
+      - name: Build and verify an unqualified Windows release bundle
+        run: |
+          $version = if ($env:CANDIDATE_VERSION) { $env:CANDIDATE_VERSION } else { "0.0.0-ci.${{ github.run_id }}" }
+          ./scripts/build-release.ps1 -OutDir releases/build -Version $version
+          python scripts/pin-release.py --agent releases/build/stowline-agent.exe --version $version
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python scripts/pin-release.py --verify
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Package the exact candidate and run full-installer checks
+        if: inputs.candidate_version != ''
+        run: |
+          ./scripts/fetch-pinned-binaries.ps1
+          python scripts/package-installer.py --build releases/build
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python -m pytest scripts/tests/test_package_installer.py -q --junitxml=releases/installer-runtime-results.xml
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          & ./releases/installer/payload/runtime/python.exe ./releases/installer/payload/wizard/bootstrap.py --verify-only
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python scripts/prepare-candidate.py --results releases/installer-runtime-results.xml
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        if: inputs.candidate_version != ''
+        with:
+          name: windows-qualification-candidate
+          path: releases/qualification-candidate/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ci-agent-bundle
+          path: |
+            release/manifest.json
+            release/bin/stowline-agent.exe
+          if-no-files-found: error
+  server-image-bundle:
+    needs: release-integrity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ci-agent-bundle
+          path: release
+      - name: Verify the bundle and build the server image
+        run: |
+          python3 scripts/pin-release.py --verify
+          docker build -f deployments/compose/Dockerfile.server -t stowline-server:ci .
+      - name: Verify the Windows agent and version inside the image
+        run: |
+          docker run --rm --network none --entrypoint python stowline-server:ci -c 'import hashlib,json; from pathlib import Path; from app.version import RELEASE_VERSION,agent_binary_path,agent_pin; m=json.loads(Path("/release/manifest.json").read_text()); assert m["version"] == RELEASE_VERSION; assert m["agent_qualified"] is False; assert agent_pin() == (m["agent_sha256"], False); assert hashlib.sha256(agent_binary_path().read_bytes()).hexdigest() == m["agent_sha256"]'
+  real-engines:
+    runs-on: windows-latest
+    env:
+      STOWLINE_REQUIRE_REAL_ENGINES: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.5"
+      - name: Install pinned restic and rclone and verify integrity
+        shell: pwsh
+        run: |
+          ./scripts/fetch-pinned-binaries.ps1
+          (Resolve-Path releases/_cache).Path | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Gateway and real backend regressions
+        run: |
+          python -m pip install -e .\gateway[dev]
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python -m pytest .\gateway\tests -q
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Recovery without the original endpoint
+        run: go test ./recovery/cmd/stowline-recovery -run TestIndependentRecoveryWithRealEngines -count=1 -v

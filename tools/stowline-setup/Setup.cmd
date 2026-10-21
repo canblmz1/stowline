@@ -16,7 +16,7 @@ if not exist "%PAYLOAD%\runtime\python.exe" (
   exit /b 1
 )
 if not exist "%PAYLOAD%\bin\stowline-agent.exe" (
-  echo ABORT: qualified agent missing from package.
+  echo ABORT: packaged agent missing.
   pause
   exit /b 1
 )

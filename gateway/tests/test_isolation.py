@@ -2,6 +2,7 @@ from pathlib import Path
 import json
 import os
 import socket
+import shutil
 import subprocess
 import threading
 import time
@@ -10,7 +11,7 @@ import urllib.request
 
 import pytest
 from fastapi.testclient import TestClient
-from gw import Registry, create_app, hash_secret
+from gw import Registry, create_app, create_app_with_store, hash_secret
 
 DEV_A = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 DEV_B = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
@@ -203,7 +204,8 @@ def test_concurrent_different_bytes_denied(client):
     assert got.content in {b"one-byte-body-aaaa", b"two-byte-body-bbbb"}
 
 
-def test_pinned_restic_init_backup_restore_through_gateway(tmp_path: Path):
+@pytest.mark.parametrize("backend", ["local", "rclone"])
+def test_pinned_restic_init_backup_restore_through_gateway(tmp_path: Path, monkeypatch, backend):
     import hashlib
     import os
     import socket
@@ -215,12 +217,28 @@ def test_pinned_restic_init_backup_restore_through_gateway(tmp_path: Path):
 
     import uvicorn
 
-    restic = Path(r"C:\Stowline\bin\restic.exe")
-    if not restic.exists():
-        pytest.skip("pinned restic missing")
+    restic = shutil.which("restic")
+    if not restic:
+        if os.environ.get("STOWLINE_REQUIRE_REAL_ENGINES") == "1":
+            pytest.fail("required restic missing")
+        pytest.skip("restic not installed")
     reg = Registry(None)
     reg.put(DEV_A, GEN1, "secret-a")
-    app = create_app(tmp_path / "store", reg)
+    if backend == "rclone":
+        from gw.store import RcloneStore
+        if not shutil.which("rclone"):
+            if os.environ.get("STOWLINE_REQUIRE_REAL_ENGINES") == "1":
+                pytest.fail("required rclone missing")
+            pytest.skip("rclone not installed")
+        conf = tmp_path / "rclone.conf"
+        conf.write_text("[qual]\ntype = local\n", encoding="utf-8")
+        monkeypatch.setenv("RCLONE_CONFIG", str(conf))
+        monkeypatch.delenv("RCLONE_CONFIG_PASS", raising=False)
+        monkeypatch.setenv("STOWLINE_GATEWAY_LOCK_DIR", str(tmp_path / "write-locks"))
+        store = RcloneStore.from_env("qual:" + (tmp_path / "store").as_posix())
+        app = create_app_with_store(store, reg)
+    else:
+        app = create_app(tmp_path / "store", reg)
     sock = socket.socket()
     sock.bind(("127.0.0.1", 0))
     port = sock.getsockname()[1]
@@ -299,7 +317,7 @@ def test_pinned_restic_init_backup_restore_through_gateway(tmp_path: Path):
                 f"GET Range bytes=0- of index/{blob.name} != SHA-256 name (status={status})"
             )
         check = subprocess.run(
-            [str(restic), "check", "--no-cache", "--repo", repo],
+            [str(restic), "check", "--read-data", "--no-cache", "--repo", repo],
             env=env,
             capture_output=True,
             timeout=120,
@@ -327,5 +345,6 @@ def test_pinned_restic_init_backup_restore_through_gateway(tmp_path: Path):
         assert hashlib.sha256(got).hexdigest() == digest
     finally:
         server.should_exit = True
+        thread.join(timeout=15)
 
 

@@ -224,15 +224,16 @@ type processRunner interface {
 
 // runAgentUpgrade is the one check-and-act cycle wired to Executor.OnAgentPin
 // (see agent/internal/control/execute.go). It does nothing unless the
-// server's pin is both qualified and different from this process's own
+// server permits this qualified build or device-specific canary, and the pin
+// differs from this process's own
 // running binary hash. On a successful swap it returns the rollback path;
 // the caller's job is then to hand control back to SCM (see EnsureRestartOnFailure
 // and the os.Exit call site in main.go) so the already-swapped binary on
 // disk becomes the one actually running. Any error here is the caller's
 // to log -- the current binary is untouched and keeps running; the next
 // heartbeat cycle tries again.
-func runAgentUpgrade(ctx context.Context, client upgradeClient, runner processRunner, currentExePath, currentSHA256, wantSHA256 string, qualified bool) (rollbackPath string, err error) {
-	if !qualified || wantSHA256 == "" || wantSHA256 == currentSHA256 {
+func runAgentUpgrade(ctx context.Context, client upgradeClient, runner processRunner, currentExePath, currentSHA256, wantSHA256 string, allowed bool) (rollbackPath string, err error) {
+	if !allowed || wantSHA256 == "" || wantSHA256 == currentSHA256 {
 		return "", nil
 	}
 	data, err := client.DownloadAgentBinary(ctx)

@@ -330,3 +330,50 @@ func TestPruneKeepsTheNewestRollbacksAndTheOneStillPending(t *testing.T) {
 		t.Fatal("the live binary must never be touched")
 	}
 }
+
+func TestUpgradeAndUnhealthyRollbackPreserveEnrollmentKeysRepositoryAndHistory(t *testing.T) {
+	root := t.TempDir()
+	bin := filepath.Join(root, "bin")
+	if err := os.MkdirAll(bin, 0700); err != nil {
+		t.Fatal(err)
+	}
+	exe := filepath.Join(bin, "stowline-agent.exe")
+	os.WriteFile(exe, []byte("old agent"), 0700)
+	// These represent existing installation material. The update API has only
+	// a binary-download operation, so it cannot mint/redeem an enrollment token.
+	files := map[string][]byte{
+		"config/pilot.json": []byte(`{"device_id":"existing-device","repository":{"generation":"gen-7"},"password_ref":"existing-key"}`),
+		"secrets/key":       []byte("synthetic protected envelope"),
+		"state/history.db":  []byte("synthetic historical journal"),
+		"Repos/config":      []byte("synthetic repository identity"),
+	}
+	for name, content := range files {
+		path := filepath.Join(root, filepath.FromSlash(name))
+		os.MkdirAll(filepath.Dir(path), 0700)
+		if err := os.WriteFile(path, content, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	client := &fakeUpgradeClient{data: []byte("new candidate")}
+	rollback, err := runAgentUpgrade(context.Background(), client, &fakeProcessRunner{}, exe, "old", sha256Hex(client.data), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeUpgradeMarker(exe, rollback); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i <= maxUnconfirmedBoots; i++ {
+		if _, err := guardUnconfirmedUpgrade(exe); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, want := range files {
+		got, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(name)))
+		if err != nil || string(got) != string(want) {
+			t.Fatalf("upgrade/rollback changed existing installation material %s: %v", name, err)
+		}
+	}
+	if got, _ := os.ReadFile(exe); string(got) != "old agent" {
+		t.Fatalf("unhealthy candidate must restore the original agent, got %q", got)
+	}
+}
