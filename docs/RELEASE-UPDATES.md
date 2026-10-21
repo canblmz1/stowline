@@ -82,6 +82,20 @@ heartbeat is not automatically timed out, and the new binary must start far
 enough to execute the guard. An operator may need to stop the service and put a
 saved rollback executable back. Do not delete rollback copies during a canary.
 
+The startup guard runs inside the registered SCM handler, before configuration,
+secrets, engine preparation or background work. On rollback the handler reports
+the restart handoff synchronously, then terminates without `SERVICE_STOPPED` so
+the verified SCM restart action starts the restored executable. It does not
+depend on recovery for graceful nonzero stops or a host-wide timeout change.
+Application preparation failures after recovery verification use the same
+abnormal termination, so subsequent guarded starts can reach the rollback limit.
+Install and installed-service startup apply and read back the 5-second restart
+action and 24-hour reset period. A recovery configuration/read-back failure is
+reported to Event Log/stderr and stops startup before automatic updates or
+application work are admitted. Interactive `service run` does not configure the
+installed service. A successful SCM restart and subsequent heartbeat must still
+be verified for each exact candidate; restoring bytes alone is insufficient.
+
 Use this update path for enrolled devices. The installer is for initial setup
 only: both the graphical launcher and `Setup.cmd` preserve an existing
 installation and stop. They do not remove another server's install or offer a

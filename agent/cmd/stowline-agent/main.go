@@ -361,377 +361,379 @@ func cmdService(op string) error {
 	case "stop":
 		return winsvc.Control("stop")
 	case "run":
-		if exePath, err := os.Executable(); err == nil {
-			// A freshly auto-upgraded binary that never reaches a healthy
-			// heartbeat is put back to the previous one after a few boots
-			// instead of crash-looping under SCM's restart policy forever.
-			if rolled, gerr := guardUnconfirmedUpgrade(exePath); gerr != nil {
-				fmt.Fprintf(os.Stderr, "upgrade guard: %s\n", domain.Redact(gerr.Error()))
-			} else if rolled {
-				fmt.Fprintln(os.Stderr, "new agent build never confirmed healthy; previous build restored, restarting")
-				os.Exit(1)
-			}
-			pruneUpgradeLeftovers(exePath, 2)
-		}
-		cfg, eng, svcApp, err := loadMode(winsvc.IsServiceContext())
+		serviceMode := winsvc.IsServiceContext()
+		return winsvc.Run(serviceStartup(exe, serviceMode, prepareService), !serviceMode)
+	default:
+		return fmt.Errorf("unknown service op")
+	}
+}
+
+// serviceStartup is passed to the SCM host without doing config/secret/engine
+// initialization. The host connects to SCM and verifies recovery first.
+func serviceStartup(exe string, serviceMode bool, prepare func(bool) (winsvc.Runner, error)) winsvc.Startup {
+	return func() (winsvc.Runner, error) {
+		rolled, err := guardUnconfirmedUpgrade(exe)
 		if err != nil {
+			return nil, fmt.Errorf("upgrade guard: %w", err)
+		}
+		if rolled {
+			return nil, winsvc.ErrRestartRequired
+		}
+		pruneUpgradeLeftovers(exe, 2)
+		return prepare(serviceMode)
+	}
+}
+
+func prepareService(serviceMode bool) (winsvc.Runner, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return nil, err
+	}
+	cfg, eng, svcApp, err := loadMode(serviceMode)
+	if err != nil {
+		return nil, err
+	}
+	pol := domain.DefaultPilotPolicy(cfg.SourceRoots)
+	if latest, err := svcApp.Journal.LatestPolicy(context.Background()); err == nil && latest != nil {
+		if latest.ValidateForBackend(cfg.Repository.BackendKind) == nil {
+			pol = *latest
+		} else if !domain.RequiresWANRateLimit(cfg.Repository.BackendKind) && latest.Validate() == nil {
+			pol = *latest
+		}
+	}
+	live := &livePolicy{}
+	live.set(pol)
+	// sharedProgress outlives any single backup -- the local status
+	// endpoint (see localui.go) reads it between runs too, so unlike the
+	// old per-run `progress` variable it must be one instance reused for
+	// the whole service lifetime, explicitly reset at the start of each
+	// run and cleared when one ends.
+	sharedProgress := &liveBackupProgress{}
+	var activity upgradeGate
+	ctrl := &scheduler.Controller{
+		DeviceID:         cfg.DeviceID,
+		InstallationID:   cfg.InstallationID,
+		Policy:           pol.Schedule,
+		PolicyRevisionID: pol.RevisionID,
+		Backoff:          scheduler.DefaultBackoff,
+		Clock:            ports.RealClock{},
+		Journal:          svcApp.Journal,
+		StartedAt:        time.Now(),
+		Reconcile: func(ctx context.Context) error {
+			_, err := svcApp.Reconcile(ctx, cfg.Repository, cfg.PasswordRef)
+			return err
+		},
+	}
+	var exec *ctrlclient.Executor
+	ctrl.Backup = func(ctx context.Context, slot string) error {
+		if err := activity.beginOperation(); err != nil {
 			return err
 		}
-		pol := domain.DefaultPilotPolicy(cfg.SourceRoots)
-		if latest, err := svcApp.Journal.LatestPolicy(context.Background()); err == nil && latest != nil {
-			if latest.ValidateForBackend(cfg.Repository.BackendKind) == nil {
-				pol = *latest
-			} else if !domain.RequiresWANRateLimit(cfg.Repository.BackendKind) && latest.Validate() == nil {
-				pol = *latest
-			}
+		defer activity.endOperation()
+		cur := live.get()
+		last, _ := svcApp.Journal.LatestSucceededBackupSlot(ctx)
+		class := wanClass(last)
+		// Previously compared a 12-byte slice against the 8-byte
+		// literal "control|" (never equal), so every operator-triggered
+		// RUN_BACKUP silently fell through to wanClass(last)'s
+		// WANClassInitialSeed for any device with no prior successful
+		// backup -- competing for the server's single site-wide seed
+		// admission slot instead of being the normal-priority operator
+		// click it is. Confirmed live: a synthetic device's first
+		// "Backup Now" click queued behind another device's seed lease
+		// and never ran. domain.IsControlSlotKey uses strings.HasPrefix,
+		// which cannot repeat this class of bug.
+		operatorTriggered := domain.IsControlSlotKey(slot)
+		if operatorTriggered {
+			class = domain.WANClassNormalBackup
+		} else if domain.IsQualificationSlotKey(slot) {
+			class = domain.WANClassCanary
 		}
-		live := &livePolicy{}
-		live.set(pol)
-		// sharedProgress outlives any single backup -- the local status
-		// endpoint (see localui.go) reads it between runs too, so unlike the
-		// old per-run `progress` variable it must be one instance reused for
-		// the whole service lifetime, explicitly reset at the start of each
-		// run and cleared when one ends.
-		sharedProgress := &liveBackupProgress{}
-		var activity upgradeGate
-		ctrl := &scheduler.Controller{
+		// An operator's explicit "Backup Now" click must not silently do
+		// nothing: only the scheduled/automatic path (any other slot
+		// format) treats a WAN admission decline as a normal "wait my
+		// turn," not an error.
+		bandwidth := cur.BandwidthKiBps
+		download := cur.RestoreDownloadKiBps
+		var progress *liveBackupProgress
+		defer sharedProgress.clear()
+		if domain.RequiresWANRateLimit(cfg.Repository.BackendKind) {
+			if reason := refuseWANStart(exec, cur, cfg.Repository.BackendKind); reason != "" {
+				if operatorTriggered {
+					return &domain.WANAdmissionDeclinedError{Reason: "LOCAL_PRECHECK_" + reason}
+				}
+				return nil
+			}
+			body := map[string]any{
+				"job_id":          string(domain.NewJobID()),
+				"attempt_id":      string(domain.NewAttemptID()),
+				"slot_key":        slot,
+				"class":           string(class),
+				"installation_id": cfg.InstallationID,
+			}
+			lease, err := exec.Client.AcquireLease(ctx, body)
+			if err != nil || lease == nil || !lease.Granted() {
+				if operatorTriggered {
+					reason := leaseStatus(lease)
+					if err != nil {
+						reason = "LEASE_HTTP_ERROR"
+					}
+					return &domain.WANAdmissionDeclinedError{Reason: reason}
+				}
+				return nil
+			}
+			bandwidth = lease.BandwidthKiBps
+			if lease.RestoreDownloadKiBps > 0 {
+				download = lease.RestoreDownloadKiBps
+			}
+			// Report an explicit 0% on the first lease renewal so the panel can
+			// distinguish this progress-capable build from older agents while
+			// restic is still performing its initial scan.
+			sharedProgress.resetForNewRun()
+			progress = sharedProgress
+			stop := holdLease(ctx, exec.Client, lease, progress)
+			defer stop()
+		} else if err := cur.ValidateForBackend(cfg.Repository.BackendKind); err != nil {
+			return err
+		}
+		if progress == nil {
+			// No WAN lease to report through, but the local desktop page
+			// still reads sharedProgress -- a local/LAN repository must show
+			// the user a percentage too.
+			sharedProgress.resetForNewRun()
+			progress = sharedProgress
+		}
+		dead := deadlineFor(time.Now(), cur.Schedule, class)
+		ctx, cancel := context.WithDeadline(ctx, dead)
+		defer cancel()
+		// Every operator "Backup Now" click is its own logical unit of
+		// work. A fixed per-device SlotKey here (unlike the scheduler's
+		// once-per-day date slot, or a qualification run's once-per-run
+		// slot) would permanently collapse every future click into the
+		// first one's cached JobSucceeded result -- restic would never
+		// run again and later file changes would never be seen.
+		// Redelivery of the SAME click is already made safe at the
+		// command layer by ConsumeCommand/CommandResult, so this
+		// job-level slot only needs to exist for the scheduler and
+		// qualification callers.
+		backupSlot := slot
+		if operatorTriggered {
+			backupSlot = ""
+		}
+		var reportProgress func(domain.BackupProgress)
+		if progress != nil {
+			reportProgress = progress.update
+		}
+		res, err := svcApp.Backup(ctx, domain.BackupRequest{
 			DeviceID:         cfg.DeviceID,
 			InstallationID:   cfg.InstallationID,
-			Policy:           pol.Schedule,
-			PolicyRevisionID: pol.RevisionID,
-			Backoff:          scheduler.DefaultBackoff,
-			Clock:            ports.RealClock{},
-			Journal:          svcApp.Journal,
-			StartedAt:        time.Now(),
-			Reconcile: func(ctx context.Context) error {
-				_, err := svcApp.Reconcile(ctx, cfg.Repository, cfg.PasswordRef)
-				return err
-			},
+			PolicyRevisionID: cur.RevisionID,
+			Repository:       cfg.Repository,
+			SourceRoots:      currentSourceRoots(filepath.Join(cfg.PilotRoot, "config", "pilot.json"), cfg.SourceRoots),
+			Excludes:         currentExcludes(filepath.Join(cfg.PilotRoot, "config", "pilot.json")),
+			VSSMode:          cfg.VSSMode,
+			PasswordRef:      cfg.PasswordRef,
+			CacheDir:         cfg.CacheDir,
+			Deadline:         dead,
+			Host:             cfg.DeviceID,
+			SlotKey:          backupSlot,
+			FreeSpaceFloor:   cur.FreeSpaceFloorBytes,
+			BandwidthKiBps:   bandwidth,
+			WANClass:         class,
+			Progress:         reportProgress,
+		})
+		_ = download
+		if operatorTriggered {
+			return winsvc.WrapOperatorBackup(res, err)
 		}
-		var exec *ctrlclient.Executor
-		ctrl.Backup = func(ctx context.Context, slot string) error {
-			if err := activity.beginOperation(); err != nil {
-				return err
-			}
-			defer activity.endOperation()
-			cur := live.get()
-			last, _ := svcApp.Journal.LatestSucceededBackupSlot(ctx)
-			class := wanClass(last)
-			// Previously compared a 12-byte slice against the 8-byte
-			// literal "control|" (never equal), so every operator-triggered
-			// RUN_BACKUP silently fell through to wanClass(last)'s
-			// WANClassInitialSeed for any device with no prior successful
-			// backup -- competing for the server's single site-wide seed
-			// admission slot instead of being the normal-priority operator
-			// click it is. Confirmed live: a synthetic device's first
-			// "Backup Now" click queued behind another device's seed lease
-			// and never ran. domain.IsControlSlotKey uses strings.HasPrefix,
-			// which cannot repeat this class of bug.
-			operatorTriggered := domain.IsControlSlotKey(slot)
-			if operatorTriggered {
-				class = domain.WANClassNormalBackup
-			} else if domain.IsQualificationSlotKey(slot) {
-				class = domain.WANClassCanary
-			}
-			// An operator's explicit "Backup Now" click must not silently do
-			// nothing: only the scheduled/automatic path (any other slot
-			// format) treats a WAN admission decline as a normal "wait my
-			// turn," not an error.
-			bandwidth := cur.BandwidthKiBps
-			download := cur.RestoreDownloadKiBps
-			var progress *liveBackupProgress
-			defer sharedProgress.clear()
-			if domain.RequiresWANRateLimit(cfg.Repository.BackendKind) {
-				if reason := refuseWANStart(exec, cur, cfg.Repository.BackendKind); reason != "" {
-					if operatorTriggered {
-						return &domain.WANAdmissionDeclinedError{Reason: "LOCAL_PRECHECK_" + reason}
-					}
-					return nil
-				}
-				body := map[string]any{
-					"job_id":          string(domain.NewJobID()),
-					"attempt_id":      string(domain.NewAttemptID()),
-					"slot_key":        slot,
-					"class":           string(class),
-					"installation_id": cfg.InstallationID,
-				}
-				lease, err := exec.Client.AcquireLease(ctx, body)
-				if err != nil || lease == nil || !lease.Granted() {
-					if operatorTriggered {
-						reason := leaseStatus(lease)
-						if err != nil {
-							reason = "LEASE_HTTP_ERROR"
-						}
-						return &domain.WANAdmissionDeclinedError{Reason: reason}
-					}
-					return nil
-				}
-				bandwidth = lease.BandwidthKiBps
-				if lease.RestoreDownloadKiBps > 0 {
-					download = lease.RestoreDownloadKiBps
-				}
-				// Report an explicit 0% on the first lease renewal so the panel can
-				// distinguish this progress-capable build from older agents while
-				// restic is still performing its initial scan.
-				sharedProgress.resetForNewRun()
-				progress = sharedProgress
-				stop := holdLease(ctx, exec.Client, lease, progress)
-				defer stop()
-			} else if err := cur.ValidateForBackend(cfg.Repository.BackendKind); err != nil {
-				return err
-			}
-			if progress == nil {
-				// No WAN lease to report through, but the local desktop page
-				// still reads sharedProgress -- a local/LAN repository must show
-				// the user a percentage too.
-				sharedProgress.resetForNewRun()
-				progress = sharedProgress
-			}
-			dead := deadlineFor(time.Now(), cur.Schedule, class)
-			ctx, cancel := context.WithDeadline(ctx, dead)
-			defer cancel()
-			// Every operator "Backup Now" click is its own logical unit of
-			// work. A fixed per-device SlotKey here (unlike the scheduler's
-			// once-per-day date slot, or a qualification run's once-per-run
-			// slot) would permanently collapse every future click into the
-			// first one's cached JobSucceeded result -- restic would never
-			// run again and later file changes would never be seen.
-			// Redelivery of the SAME click is already made safe at the
-			// command layer by ConsumeCommand/CommandResult, so this
-			// job-level slot only needs to exist for the scheduler and
-			// qualification callers.
-			backupSlot := slot
-			if operatorTriggered {
-				backupSlot = ""
-			}
-			var reportProgress func(domain.BackupProgress)
-			if progress != nil {
-				reportProgress = progress.update
-			}
-			res, err := svcApp.Backup(ctx, domain.BackupRequest{
-				DeviceID:         cfg.DeviceID,
-				InstallationID:   cfg.InstallationID,
-				PolicyRevisionID: cur.RevisionID,
-				Repository:       cfg.Repository,
-				SourceRoots:      currentSourceRoots(filepath.Join(cfg.PilotRoot, "config", "pilot.json"), cfg.SourceRoots),
-				Excludes:         currentExcludes(filepath.Join(cfg.PilotRoot, "config", "pilot.json")),
-				VSSMode:          cfg.VSSMode,
-				PasswordRef:      cfg.PasswordRef,
-				CacheDir:         cfg.CacheDir,
-				Deadline:         dead,
-				Host:             cfg.DeviceID,
-				SlotKey:          backupSlot,
-				FreeSpaceFloor:   cur.FreeSpaceFloorBytes,
-				BandwidthKiBps:   bandwidth,
-				WANClass:         class,
-				Progress:         reportProgress,
-			})
-			_ = download
-			if operatorTriggered {
-				return winsvc.WrapOperatorBackup(res, err)
-			}
-			return winsvc.WrapBackup(res, err)
+		return winsvc.WrapBackup(res, err)
+	}
+	// restoreWithAdmission is the single restore path for both the
+	// panel's RESTORE_TO_STAGING command and the local desktop page, so
+	// a self-service restore gets the same WAN admission lease and
+	// bandwidth limit as an admin-initiated one instead of bypassing
+	// them. Returns where the files landed (always the staging root).
+	restoreWithAdmission := func(ctx context.Context, jobID, snapshot string, selections []string, progress func(domain.RestoreProgress)) (string, error) {
+		if err := activity.beginOperation(); err != nil {
+			return "", err
 		}
-		// restoreWithAdmission is the single restore path for both the
-		// panel's RESTORE_TO_STAGING command and the local desktop page, so
-		// a self-service restore gets the same WAN admission lease and
-		// bandwidth limit as an admin-initiated one instead of bypassing
-		// them. Returns where the files landed (always the staging root).
-		restoreWithAdmission := func(ctx context.Context, jobID, snapshot string, selections []string, progress func(domain.RestoreProgress)) (string, error) {
-			if err := activity.beginOperation(); err != nil {
-				return "", err
+		defer activity.endOperation()
+		cur := live.get()
+		download := cur.RestoreDownloadKiBps
+		if download == 0 {
+			download = cur.BandwidthKiBps
+		}
+		if domain.RequiresWANRateLimit(cfg.Repository.BackendKind) {
+			if exec == nil || exec.Client == nil {
+				return "", fmt.Errorf("%w: restore requires control plane admission", domain.ErrConfig)
 			}
-			defer activity.endOperation()
-			cur := live.get()
-			download := cur.RestoreDownloadKiBps
-			if download == 0 {
-				download = cur.BandwidthKiBps
-			}
-			if domain.RequiresWANRateLimit(cfg.Repository.BackendKind) {
-				if exec == nil || exec.Client == nil {
-					return "", fmt.Errorf("%w: restore requires control plane admission", domain.ErrConfig)
-				}
-				lease, err := exec.Client.AcquireLease(ctx, map[string]any{
-					"job_id": jobID, "attempt_id": string(domain.NewAttemptID()),
-					"class": string(domain.WANClassRestore), "installation_id": cfg.InstallationID,
-				})
-				if err != nil {
-					return "", err
-				}
-				if lease == nil || !lease.Granted() {
-					return "", fmt.Errorf("%w: restore admission %s", domain.ErrConfig, leaseStatus(lease))
-				}
-				if lease.RestoreDownloadKiBps > 0 {
-					download = lease.RestoreDownloadKiBps
-				}
-				stop := holdLease(ctx, exec.Client, lease, nil)
-				defer stop()
-			}
-			res, err := svcApp.Restore(ctx, domain.RestoreRequest{
-				JobID:                domain.JobID(jobID),
-				SnapshotID:           domain.SnapshotID(snapshot),
-				Selections:           selections,
-				StagingRoot:          cfg.StagingRoot,
-				PasswordRef:          cfg.PasswordRef,
-				Repository:           cfg.Repository,
-				VerifyContent:        true,
-				Deadline:             time.Now().Add(2 * time.Hour),
-				RestoreDownloadKiBps: download,
-				BandwidthKiBps:       download,
-				Progress:             progress,
+			lease, err := exec.Client.AcquireLease(ctx, map[string]any{
+				"job_id": jobID, "attempt_id": string(domain.NewAttemptID()),
+				"class": string(domain.WANClassRestore), "installation_id": cfg.InstallationID,
 			})
 			if err != nil {
 				return "", err
 			}
-			if res.State != domain.RestoreReady {
-				return "", fmt.Errorf("restore state %s", res.State)
+			if lease == nil || !lease.Granted() {
+				return "", fmt.Errorf("%w: restore admission %s", domain.ErrConfig, leaseStatus(lease))
 			}
-			return res.Destination, nil
-		}
-		if cfg.ControlPlaneURL != "" {
-			cred := ""
-			if cfg.ControlSecretRef.Locator != "" {
-				if prov, _, err := secrets.ForRef(cfg.ControlSecretRef); err == nil {
-					if h, err := prov.Open(context.Background(), cfg.ControlSecretRef); err == nil {
-						cred = string(append([]byte(nil), h.Bytes()...))
-						_ = h.Close()
-					}
-				}
+			if lease.RestoreDownloadKiBps > 0 {
+				download = lease.RestoreDownloadKiBps
 			}
-			ctrlClient := &ctrlclient.Client{BaseURL: cfg.ControlPlaneURL, Credential: cred}
-			exec = &ctrlclient.Executor{
-				Client:      ctrlClient,
-				Journal:     svcApp.Journal,
-				Version:     buildinfo.Version,
-				AgentSHA256: selfSHA256(),
-				PolicyRev:   pol.RevisionID,
-				Cancel:      svcApp.CancelCurrent,
-				OnPolicy: func(p domain.LocalPolicy) {
-					live.set(p)
-					ctrl.SetPolicy(p.Schedule, p.RevisionID)
-				},
-				Backup: func(ctx context.Context) error {
-					return ctrl.Backup(ctx, domain.ControlSlotKey(cfg.DeviceID))
-				},
-				Restore: func(ctx context.Context, jobID, snapshot string, selections []string) error {
-					_, err := restoreWithAdmission(ctx, jobID, snapshot, selections, nil)
-					return err
-				},
-				Canary: func(ctx context.Context) error {
-					return cmdCanary(nil)
-				},
-				Browse: func(ctx context.Context, snapshot, prefix string) (map[string]any, error) {
-					entries, truncated, err := eng.ListSnapshot(ctx, cfg.Repository, cfg.PasswordRef, snapshot, prefix)
-					if err != nil {
-						return nil, err
-					}
-					return map[string]any{"entries": entries, "prefix": prefix, "truncated": truncated, "count": len(entries)}, nil
-				},
-				BrowseLocalDir: func(ctx context.Context, path, cursor string, limit int) (map[string]any, error) {
-					return browseLocalDir(ctx, path, cursor, limit, cfg.PilotRoot)
-				},
-				ApplySelection: func(ctx context.Context, revisionID string, sourceRoots, sensitiveConsents []string) (map[string]any, error) {
-					return applySelection(ctx, revisionID, sourceRoots, sensitiveConsents, filepath.Join(cfg.PilotRoot, "config", "pilot.json"))
-				},
-				BuildCatalog: buildCatalogFunc(eng, ctrlClient, cfg.Repository, cfg.PasswordRef),
-				OnAgentPin: (agentPinHandler{
-					activity:   &activity,
-					exePath:    exe,
-					currentSHA: hashFile,
-					stage: func(exePath, currentSHA, wantSHA256 string, allowed bool) bool {
-						ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-						defer cancel()
-						rollback, err := runAgentUpgrade(ctx, ctrlClient, eng.Runner, exePath, currentSHA, wantSHA256, allowed)
-						if err != nil {
-							fmt.Fprintf(os.Stderr, "agent upgrade attempt failed: %s\n", domain.Redact(err.Error()))
-							return false
-						}
-						if rollback == "" {
-							return false // already on the pinned build, or nothing qualified to move to
-						}
-						// The new binary is already verified and staged at the live
-						// path. This deliberately does NOT report a graceful Stop --
-						// SCM's recovery policy (EnsureRestartOnFailure, above) only
-						// fires on exactly that kind of abnormal termination, and
-						// relaunching is how the already-swapped binary actually
-						// starts running.
-						if err := writeUpgradeMarker(exePath, rollback); err != nil {
-							// Without the marker the boot-loop guard can't protect this
-							// upgrade; undo the swap rather than run unguarded.
-							_ = restoreRollback(exePath, rollback)
-							fmt.Fprintf(os.Stderr, "agent upgrade aborted, could not record rollback marker: %s\n", domain.Redact(err.Error()))
-							return false
-						}
-						fmt.Fprintf(os.Stderr, "agent upgrade staged, restarting to apply (rollback kept at %s)\n", filepath.Base(rollback))
-						go func() { os.Exit(1) }()
-						return true
-					},
-				}).onPin,
-			}
-			// Best-effort, idempotent: makes sure this service is configured to
-			// be restarted by SCM after the deliberate abnormal exit an
-			// automatic upgrade swap performs below. Installs from before this
-			// feature existed never had this set; every startup re-applies it
-			// rather than relying solely on a future reinstall.
-			if winsvc.IsServiceContext() {
-				// Only the real SCM-hosted service may reconfigure the
-				// StowlineBackup service; an interactive `service run` (a test or
-				// a developer) must never touch the installed one.
-				_ = winsvc.EnsureRestartOnFailure()
-			}
-			go func() {
-				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-				defer cancel()
-				if err := pushRepositoryPasswordToEscrow(ctx, ctrlClient, cfg.PasswordRef); err != nil {
-					// Best-effort: the vault is a convenience backstop for a lost
-					// PC, not a precondition for this backup working. A failure
-					// here (control plane briefly unreachable at startup, e.g.)
-					// self-heals on the next service restart.
-					fmt.Fprintf(os.Stderr, "escrow push failed: %s\n", domain.Redact(err.Error()))
-				}
-			}()
+			stop := holdLease(ctx, exec.Client, lease, nil)
+			defer stop()
 		}
-		if exec != nil && exec.Client != nil {
-			pilotJSON := filepath.Join(cfg.PilotRoot, "config", "pilot.json")
-			go syncSourceRootsAtStart(context.Background(), exec.Client.SyncSourceRoots, func() []string {
-				return currentSourceRoots(pilotJSON, cfg.SourceRoots)
-			}, 10, time.Minute)
+		res, err := svcApp.Restore(ctx, domain.RestoreRequest{
+			JobID:                domain.JobID(jobID),
+			SnapshotID:           domain.SnapshotID(snapshot),
+			Selections:           selections,
+			StagingRoot:          cfg.StagingRoot,
+			PasswordRef:          cfg.PasswordRef,
+			Repository:           cfg.Repository,
+			VerifyContent:        true,
+			Deadline:             time.Now().Add(2 * time.Hour),
+			RestoreDownloadKiBps: download,
+			BandwidthKiBps:       download,
+			Progress:             progress,
+		})
+		if err != nil {
+			return "", err
 		}
-		startLocalUIServer(sharedProgress, eng, svcApp, exec, cfg, restoreWithAdmission)
-		qual := &qualification.Runner{
-			Dir:              filepath.Join(cfg.PilotRoot, "state", "qualification"),
-			AllowedSource:    qualification.PilotSyntheticCorpus,
-			ConfigSources:    cfg.SourceRoots,
-			Repository:       cfg.Repository,
-			VSSMode:          cfg.VSSMode,
-			PasswordRef:      cfg.PasswordRef,
-			DeviceID:         cfg.DeviceID,
-			InstallationID:   cfg.InstallationID,
-			PolicyRevisionID: pol.RevisionID,
-			CacheDir:         cfg.CacheDir,
-			Host:             cfg.DeviceID,
-			FreeSpaceFloor:   pol.FreeSpaceFloorBytes,
-			BandwidthKiBps:   pol.BandwidthKiBps,
-			WorkloadBytes:    qualification.DefaultWorkloadBytes,
-			Journal:          svcApp.Journal,
-			AllowExecute: func() bool {
-				ok, err := identity.IsLocalSystem()
-				return err == nil && ok
-			},
-			InspectACL: qualification.RequireAdminSystemACL,
-			Backup: func(ctx context.Context, req domain.BackupRequest) (domain.BackupResult, error) {
-				if err := activity.beginOperation(); err != nil {
-					return domain.BackupResult{}, err
-				}
-				defer activity.endOperation()
-				req.Deadline = time.Now().Add(cfgDeadline())
-				return svcApp.Backup(ctx, req)
-			},
+		if res.State != domain.RestoreReady {
+			return "", fmt.Errorf("restore state %s", res.State)
 		}
-		return winsvc.Run(&scheduleAdapter{ctrl: ctrl, exec: exec, qual: qual}, !winsvc.IsServiceContext())
-	default:
-		return fmt.Errorf("unknown service op")
+		return res.Destination, nil
 	}
+	if cfg.ControlPlaneURL != "" {
+		cred := ""
+		if cfg.ControlSecretRef.Locator != "" {
+			if prov, _, err := secrets.ForRef(cfg.ControlSecretRef); err == nil {
+				if h, err := prov.Open(context.Background(), cfg.ControlSecretRef); err == nil {
+					cred = string(append([]byte(nil), h.Bytes()...))
+					_ = h.Close()
+				}
+			}
+		}
+		ctrlClient := &ctrlclient.Client{BaseURL: cfg.ControlPlaneURL, Credential: cred}
+		exec = &ctrlclient.Executor{
+			Client:      ctrlClient,
+			Journal:     svcApp.Journal,
+			Version:     buildinfo.Version,
+			AgentSHA256: selfSHA256(),
+			PolicyRev:   pol.RevisionID,
+			Cancel:      svcApp.CancelCurrent,
+			OnPolicy: func(p domain.LocalPolicy) {
+				live.set(p)
+				ctrl.SetPolicy(p.Schedule, p.RevisionID)
+			},
+			Backup: func(ctx context.Context) error {
+				return ctrl.Backup(ctx, domain.ControlSlotKey(cfg.DeviceID))
+			},
+			Restore: func(ctx context.Context, jobID, snapshot string, selections []string) error {
+				_, err := restoreWithAdmission(ctx, jobID, snapshot, selections, nil)
+				return err
+			},
+			Canary: func(ctx context.Context) error {
+				return cmdCanary(nil)
+			},
+			Browse: func(ctx context.Context, snapshot, prefix string) (map[string]any, error) {
+				entries, truncated, err := eng.ListSnapshot(ctx, cfg.Repository, cfg.PasswordRef, snapshot, prefix)
+				if err != nil {
+					return nil, err
+				}
+				return map[string]any{"entries": entries, "prefix": prefix, "truncated": truncated, "count": len(entries)}, nil
+			},
+			BrowseLocalDir: func(ctx context.Context, path, cursor string, limit int) (map[string]any, error) {
+				return browseLocalDir(ctx, path, cursor, limit, cfg.PilotRoot)
+			},
+			ApplySelection: func(ctx context.Context, revisionID string, sourceRoots, sensitiveConsents []string) (map[string]any, error) {
+				return applySelection(ctx, revisionID, sourceRoots, sensitiveConsents, filepath.Join(cfg.PilotRoot, "config", "pilot.json"))
+			},
+			BuildCatalog: buildCatalogFunc(eng, ctrlClient, cfg.Repository, cfg.PasswordRef),
+			OnAgentPin: (agentPinHandler{
+				activity:   &activity,
+				exePath:    exe,
+				currentSHA: hashFile,
+				stage: func(exePath, currentSHA, wantSHA256 string, allowed bool) bool {
+					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+					defer cancel()
+					rollback, err := runAgentUpgrade(ctx, ctrlClient, eng.Runner, exePath, currentSHA, wantSHA256, allowed)
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "agent upgrade attempt failed: %s\n", domain.Redact(err.Error()))
+						return false
+					}
+					if rollback == "" {
+						return false // already on the pinned build, or nothing qualified to move to
+					}
+					// The new binary is already verified and staged at the live
+					// path. This deliberately does NOT report a graceful Stop --
+					// SCM's verified recovery policy only
+					// fires on exactly that kind of abnormal termination, and
+					// relaunching is how the already-swapped binary actually
+					// starts running.
+					if err := writeUpgradeMarker(exePath, rollback); err != nil {
+						// Without the marker the boot-loop guard can't protect this
+						// upgrade; undo the swap rather than run unguarded.
+						_ = restoreRollback(exePath, rollback)
+						fmt.Fprintf(os.Stderr, "agent upgrade aborted, could not record rollback marker: %s\n", domain.Redact(err.Error()))
+						return false
+					}
+					fmt.Fprintf(os.Stderr, "agent upgrade staged, restarting to apply (rollback kept at %s)\n", filepath.Base(rollback))
+					go func() { os.Exit(1) }()
+					return true
+				},
+			}).onPin,
+		}
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := pushRepositoryPasswordToEscrow(ctx, ctrlClient, cfg.PasswordRef); err != nil {
+				// Best-effort: the vault is a convenience backstop for a lost
+				// PC, not a precondition for this backup working. A failure
+				// here (control plane briefly unreachable at startup, e.g.)
+				// self-heals on the next service restart.
+				fmt.Fprintf(os.Stderr, "escrow push failed: %s\n", domain.Redact(err.Error()))
+			}
+		}()
+	}
+	if exec != nil && exec.Client != nil {
+		pilotJSON := filepath.Join(cfg.PilotRoot, "config", "pilot.json")
+		go syncSourceRootsAtStart(context.Background(), exec.Client.SyncSourceRoots, func() []string {
+			return currentSourceRoots(pilotJSON, cfg.SourceRoots)
+		}, 10, time.Minute)
+	}
+	startLocalUIServer(sharedProgress, eng, svcApp, exec, cfg, restoreWithAdmission)
+	qual := &qualification.Runner{
+		Dir:              filepath.Join(cfg.PilotRoot, "state", "qualification"),
+		AllowedSource:    qualification.PilotSyntheticCorpus,
+		ConfigSources:    cfg.SourceRoots,
+		Repository:       cfg.Repository,
+		VSSMode:          cfg.VSSMode,
+		PasswordRef:      cfg.PasswordRef,
+		DeviceID:         cfg.DeviceID,
+		InstallationID:   cfg.InstallationID,
+		PolicyRevisionID: pol.RevisionID,
+		CacheDir:         cfg.CacheDir,
+		Host:             cfg.DeviceID,
+		FreeSpaceFloor:   pol.FreeSpaceFloorBytes,
+		BandwidthKiBps:   pol.BandwidthKiBps,
+		WorkloadBytes:    qualification.DefaultWorkloadBytes,
+		Journal:          svcApp.Journal,
+		AllowExecute: func() bool {
+			ok, err := identity.IsLocalSystem()
+			return err == nil && ok
+		},
+		InspectACL: qualification.RequireAdminSystemACL,
+		Backup: func(ctx context.Context, req domain.BackupRequest) (domain.BackupResult, error) {
+			if err := activity.beginOperation(); err != nil {
+				return domain.BackupResult{}, err
+			}
+			defer activity.endOperation()
+			req.Deadline = time.Now().Add(cfgDeadline())
+			return svcApp.Backup(ctx, req)
+		},
+	}
+	return &scheduleAdapter{ctrl: ctrl, exec: exec, qual: qual}, nil
 }
 
 type scheduleAdapter struct {
